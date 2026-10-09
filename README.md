@@ -4,7 +4,7 @@ Python background service for scanning cryptocurrency markets, evaluating config
 
 ## Project Status
 
-**Stage:** Phases 1 through 4 are in place; Phase 5 deployment scaffolding has started
+**Stage:** Phases 1 through 4 are complete. Phase 5 is deployed and verified for scheduled, signal-only scanning with Firestore persistence.
 
 ### Done
 
@@ -15,14 +15,44 @@ Python background service for scanning cryptocurrency markets, evaluating config
 - Completed Phase 2: public Binance spot klines, bounded retry and request pacing, closed-candle scanning, and local JSONL observations.
 - Completed Phase 3: indicator calculations, trend and RSI-based confidence scoring, strategy evaluation, and rejected/accepted signal records.
 - Completed Phase 4 foundation: versioned event models, JSONL event store, dedicated signal event schema, and a Firestore-ready sink for production persistence.
-- Verified with `python -m unittest discover -s tests -v`: all 18 tests pass.
+- Last full test run: 17 tests passed; one configuration test still expects Firestore to be disabled while the active runtime configuration enables it.
+- Pushed the repository to GitHub on the `main` branch.
+- Switched the Firebase default project to `jasperpos-dev`.
+- Added the scheduled Firebase function named `trading_scanMarket`.
+- Deployed the Python scanner as the Cloud Run Job `trading-market-scan` in `asia-southeast1`.
+- Verified that scheduled scans write market observations and signals to the Firestore `market_events` collection.
+
+### Current live configuration
+
+The scanner is enabled in test mode. It reads public Binance Spot Testnet market data and does not place orders:
+
+```json
+{
+  "enabled": true,
+  "mode": "test",
+  "interval_minutes": 1
+}
+```
+
+Cloud Scheduler triggers the Firebase function every 5 minutes. `interval_minutes` is an additional Firestore gate; the effective scan frequency cannot be faster than the scheduler cadence.
+
+### Current status
+
+- Local Python app: working; one existing test assertion disagrees with the enabled Firebase config
+- GitHub: synced and pushed
+- Firebase project target: `jasperpos-dev`
+- Cloud Scheduler: active, every 5 minutes
+- Firebase function: `trading_scanMarket`, submits the Python Cloud Run Job
+- Cloud Run Job: `trading-market-scan` in `asia-southeast1`
+- Firestore: verified observation and signal documents in `market_events`
+- Runtime model: signal-only test mode, no live trading enabled
 
 ### Next
 
-1. Add Docker/container documentation and deployment checks.
-2. Validate the service in a container locally.
-3. Document Cloud Run configuration and secret-handling requirements.
-4. Finalize operations guidance for log retention, restart behavior, and production safety.
+1. Keep the scanner in test mode; no order execution is implemented.
+2. Monitor `app_config.last_run_at`, Cloud Run Job logs, and `market_events` for ongoing runs.
+3. Review provider and regional availability before changing the Binance endpoint or Job region.
+4. Add any trading or production execution capability only as a separately reviewed and explicitly approved milestone.
 
 ## Scope
 
@@ -45,10 +75,9 @@ Python background service for scanning cryptocurrency markets, evaluating config
 ## Proposed Architecture
 
 ```text
-Configuration -> Async runner -> Binance market data -> Scanner -> Indicators
-                                                   -> Strategy evaluation -> Risk checks
-                                                                    -> Signal/event log
-                                                                    -> Firestore
+Firestore app_config -> Firebase scheduled function -> Cloud Run Job (asia-southeast1)
+                                                        -> Python scanner -> Binance Spot Testnet
+                                                        -> observations/signals -> Firestore market_events
 ```
 
 Keep exchange access, persistence, indicator calculation, strategy evaluation, and orchestration behind separate modules so they can be tested independently. The runner should support graceful shutdown, bounded retries, and useful health/status logs; a failure in one market scan should not silently terminate the service.
@@ -85,7 +114,7 @@ The Angular `frontend/` directory from the original outline is intentionally omi
 - [x] Add structured console logging and an asyncio runner with clean startup and shutdown.
 - [x] Keep secrets out of checked-in JSON and logs.
 
-**Complete:** the service starts from the documented command, validates sample configuration, handles shutdown, and passes its config, logging, and lifecycle tests. The runner currently waits for shutdown; it does not yet fetch market data or scan assets.
+**Complete:** the service starts from the documented command, validates configuration, handles shutdown, and provides the foundation used by the market scanner.
 
 ### Phase 2: Market data and scanner
 
@@ -95,7 +124,7 @@ The Angular `frontend/` directory from the original outline is intentionally omi
 
 **Complete:** all 11 unit tests pass with mocked exchange responses; live public testnet checks fetched 100 BTCUSDT candles and wrote observations for BTCUSDT and ETHUSDT. No credentials or order endpoints are used.
 
-**Current defaults:** Binance Spot Testnet, symbols `BTCUSDT` and `ETHUSDT`, `1m` candles, 100 candles requested per symbol, and a 60-second scan interval. Change these in `config/binance.json`, `config/assets.json`, and `config/environment.json`. Production market-data access can be selected in config; order placement is not implemented.
+**Current defaults:** Binance Spot Testnet, symbols `BTCUSDT` and `ETHUSDT`, `1m` candles, 100 candles requested per symbol, and a 300-second local runner interval. Change these in `config/binance.json`, `config/assets.json`, and `config/environment.json`. Production market-data access can be selected in config; order placement is not implemented.
 
 ### Phase 3: Indicators, strategies, and risk
 
@@ -112,16 +141,17 @@ The Angular `frontend/` directory from the original outline is intentionally omi
 - [x] Implement local structured-file logging as a reliable development/test sink and a Firestore-ready production sink.
 - [x] Make writes timestamped, traceable, and structured for downstream analysis.
 
-**Complete:** tests verify event shape, local persistence, and a Firestore adapter contract; local JSONL remains the default test/development sink.
+**Complete:** tests verify event shape, local persistence, and the Firestore adapter contract. Live scheduled runs have also been verified writing observations and signals to `market_events`; local JSONL remains available for development.
 
 ### Phase 5: Operations and deployment
 
-- Default runtime mode is now `test` for the safe signal-only path.
-- Add Docker build/run instructions, Cloud Run configuration, health behavior, and shutdown handling.
-- Document secret provisioning with Google Cloud Secret Manager or service identity; never bake credentials into the image.
-- Define operational limits such as request pacing, log retention, and restart behavior.
+- [x] Keep the runtime in `test` mode on the signal-only path.
+- [x] Deploy a Firebase scheduled function that submits a one-shot Python Cloud Run Job.
+- [x] Verify Binance testnet access and Firestore writes from the Job in `asia-southeast1`.
+- [x] Use service identities for Firestore writes and Cloud Run Job execution; do not bake credentials into the image.
+- [ ] Review log retention, alerting, and operational limits before treating the deployment as production-ready.
 
-**Done when:** the container builds and runs locally, deployment steps are reproducible, and a Cloud Run smoke test can be performed without enabling live trading.
+**Current result:** the Job builds, runs one scan per execution, and writes events without enabling live trading. Production readiness still requires an operational review.
 
 ### Later, only after explicit approval
 
@@ -132,9 +162,9 @@ The Angular `frontend/` directory from the original outline is intentionally omi
 
 ## Decisions To Confirm
 
-- **Indicators:** choose `pandas-ta` or TA-Lib based on Python 3.12+ and Cloud Run compatibility.
-- **Markets:** current defaults are spot, `BTCUSDT`/`ETHUSDT`, `1m`, and 60 seconds; adjust if another market universe or cadence is intended.
-- **Storage:** Firestore collection/event shape and retention expectations remain open; local JSONL currently records closed candles.
+- **Indicators:** `pandas-ta` is selected for Python 3.13 compatibility.
+- **Markets:** current defaults are Binance Spot Testnet, `BTCUSDT`/`ETHUSDT`, `1m`, and a 300-second local runner interval; scheduled Cloud scans are triggered every 5 minutes.
+- **Storage:** observations and signal events are currently written to `market_events`; retention and future collection separation remain open.
 - **Runtime configuration:** JSON files for non-secret settings; environment variables or managed identity for credentials and deployment-specific values.
 
 ## Safety and Configuration
@@ -188,9 +218,11 @@ python -c "import asyncio; from src.models.config import load_config; from src.s
 
 For the Firebase-backed production design, see [docs/FIRESTORE_COLLECTIONS.md](docs/FIRESTORE_COLLECTIONS.md). The default MVP event stream is `market_events`, and the project is structured to expand into `market_observations`, `signals`, `trades`, and `users`.
 
-## Firebase scheduled scan (recommended for production)
+## Firebase scheduled scan
 
 For a low-cost, low-risk schedule-based deployment, use Firebase Functions with Cloud Scheduler. The repository includes a prefixed function named `trading_scanMarket` in [functions/index.js](functions/index.js).
+
+The scheduled function submits a one-shot Python execution to the Cloud Run Job `trading-market-scan`; it does not run Python inside the Node.js function. The Job is deployed in `asia-southeast1` because Binance testnet returned HTTP 451 from `us-central1`. Keep the Job's runtime identity authorized for Firestore writes and the function identity authorized to execute Cloud Run Jobs.
 
 ### 1. Install Firebase tools
 
@@ -206,23 +238,26 @@ firebase login
 firebase use jasperpos-dev
 ```
 
-### 3. Deploy the function
+### 3. Deploy the scanner Job and function
 
 ```powershell
-firebase deploy --only functions
+gcloud run jobs deploy trading-market-scan --source . --project jasperpos-dev --region asia-southeast1 --set-env-vars SCAN_ONCE=true --tasks 1 --max-retries 1 --task-timeout 540s
+firebase deploy --only functions --project jasperpos-dev
 ```
 
-The scheduler itself remains on a fixed Cloud Scheduler cadence, but the runtime behavior is controlled by the Firestore config document in the `app_config` collection. Update the `interval_minutes` value there to change the effective scan interval without redeploying the function. The function name is prefixed as `trading_scanMarket` so it is easy to locate in the Cloud Functions list.
+The live scheduler runs every 5 minutes. Runtime behavior is controlled by the Firestore config document in `app_config`; `enabled` turns scans on or off, `mode` remains `test`, and `interval_minutes` provides an additional minimum interval. The effective cadence cannot exceed the Cloud Scheduler cadence. The function name is `trading_scanMarket`.
 
 Example Firestore document fields:
 
 ```json
 {
-  "interval_minutes": 15,
+  "enabled": true,
   "mode": "test",
-  "enabled": true
+  "interval_minutes": 1
 }
 ```
+
+The Job runtime identity needs Firestore write access, and the function runtime identity needs permission to execute Cloud Run Jobs. Keep the Job in a region where the configured market-data endpoint is reachable; Binance testnet returned HTTP 451 from `us-central1` in this deployment.
 
 The trigger can still be overridden with:
 
@@ -231,56 +266,30 @@ $env:SCHEDULE_INTERVAL = "every 5 minutes"
 firebase deploy --only functions
 ```
 
-## Deploy to Google Cloud Run
+## Cloud Run Job operations
 
 For the final operational checklist, see [docs/DEPLOYMENT_CHECKLIST.md](docs/DEPLOYMENT_CHECKLIST.md).
 
-The repo is prepared for a containerized deployment model, but Cloud Run configuration should be treated as a deployment step, not a secret-bearing source change.
+The scanner runs as a one-shot Cloud Run Job, not as an unauthenticated, long-running web service. `SCAN_ONCE=true` makes the container scan once and exit. Rebuild and deploy the Job after changing Python code or dependencies, then deploy the Firebase function if its code changes.
 
-### Prerequisites
-
-- A Google Cloud project with billing enabled.
-- `gcloud` installed and authenticated.
-- The Cloud Run and Artifact Registry APIs enabled.
-- A service account or ADC-based identity used by the container; never store raw secret files in the repo.
-
-### 1. Set up the project
+List recent executions:
 
 ```powershell
-gcloud auth login
-gcloud config set project jasperpos-dev
-gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
+gcloud run jobs executions list --job=trading-market-scan --project jasperpos-dev --region asia-southeast1
 ```
 
-### 2. Create a Docker repository
+Read scanner logs:
 
 ```powershell
-gcloud artifacts repositories create tradingapp-repo --repository-format=docker --location=us-central1
+gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="trading-market-scan" AND resource.labels.location="asia-southeast1"' --project jasperpos-dev --limit 50
 ```
 
-### 3. Build and push the image
-
-```powershell
-gcloud builds submit --tag us-central1-docker.pkg.dev/jasperpos-dev/tradingapp-repo/tradingapp:latest .
-```
-
-### 4. Deploy to Cloud Run
-
-```powershell
-gcloud run deploy tradingapp --image us-central1-docker.pkg.dev/jasperpos-dev/tradingapp-repo/tradingapp:latest --platform managed --region us-central1 --allow-unauthenticated --memory 512Mi --cpu 1 --max-instances 1
-```
-
-### 5. Operational safety
+### Operational safety
 
 - Keep secrets in Google Secret Manager or workload identity, not in the image or repository.
 - Continue to keep order execution disabled by default.
 - Use the public Binance testnet endpoint unless a later milestone explicitly authorizes production access.
-- Always prefer the local JSONL sink for development and a Firestore-backed sink only when credentials are available through a secure project identity.
+- The Job uses its service identity for Firestore writes; do not add service-account key files to the repository.
+- Keep request pacing and scheduled frequency conservative.
 
-### 6. Health and restart behavior
-
-- The service is designed to run as a long-lived background process and should be treated as a non-interactive worker.
-- If the container exits, Cloud Run will restart it according to platform policy, but the service should still be configured with low-cost, low-risk market data polling.
-- Keep the scan interval and request pacing conservative to avoid quota exhaustion.
-
-> This repo is already structured for a signal-only background worker. It is not a live trading deployment and should not be marketed or configured as one without explicit authorization.
+> This is a signal-only market scanner, not a live trading deployment. It does not place orders.

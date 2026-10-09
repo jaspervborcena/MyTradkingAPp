@@ -1,10 +1,11 @@
 const admin = require('firebase-admin');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { setGlobalOptions } = require('firebase-functions/v2');
-const { spawn } = require('child_process');
-const path = require('path');
+const { GoogleAuth } = require('google-auth-library');
 
 admin.initializeApp();
+const googleAuth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
 
 const scheduleExpression = process.env.SCHEDULE_INTERVAL || 'every 5 minutes';
 
@@ -14,37 +15,36 @@ setGlobalOptions({
   memory: '1GiB',
 });
 
-function runPythonScanner() {
-  return new Promise((resolve, reject) => {
-    const repoRoot = path.join(__dirname, '..');
-    const child = spawn('python', ['-m', 'src.main'], {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        PYTHONUNBUFFERED: '1',
-      },
-      stdio: 'inherit',
-    });
-
-    child.on('error', (error) => {
-      console.error('scheduled_scan_start_failed', error);
-      reject(error);
-    });
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-
-      reject(new Error(`python app exited with code ${code}`));
-    });
+async function startPythonScannerJob() {
+  const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || admin.app().options.projectId;
+  if (!projectId) {
+    throw new Error('Google Cloud project ID is not available to the scheduled function');
+  }
+  const region = process.env.SCANNER_JOB_REGION || 'asia-southeast1';
+  const jobName = process.env.SCANNER_JOB_NAME || 'trading-market-scan';
+  const url = `https://run.googleapis.com/v2/projects/${projectId}/locations/${region}/jobs/${jobName}:run`;
+  const client = await googleAuth.getClient();
+  const token = await client.getAccessToken();
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token.token || token}`,
+      'Content-Type': 'application/json',
+    },
+    body: '{}',
   });
+
+  if (!response.ok) {
+    throw new Error(`Cloud Run Job launch failed (${response.status}): ${await response.text()}`);
+  }
+
+  const operation = await response.json();
+  console.log(`scanner_job_started name=${jobName} operation=${operation.name || 'unknown'}`);
 }
 
 async function getAppConfig() {
   try {
-    const db = admin.firestore();
+    const db = getFirestore();
     const snapshot = await db.collection('app_config').limit(1).get();
 
     if (snapshot.empty) {
@@ -68,7 +68,7 @@ async function getAppConfig() {
   } catch (error) {
     console.warn('app_config_load_failed', error);
     return {
-      enabled: true,
+      enabled: false,
       mode: 'test',
       interval_minutes: 15,
       docId: null,
@@ -82,7 +82,7 @@ async function updateLastRun(docRef) {
     return;
   }
 
-  await docRef.set({ last_run_at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  await docRef.set({ last_run_at: FieldValue.serverTimestamp() }, { merge: true });
 }
 
 exports.trading_scanMarket = onSchedule(
@@ -118,11 +118,11 @@ exports.trading_scanMarket = onSchedule(
 
     console.log(`Starting scheduled market scan for mode=${config.mode || 'test'} interval_minutes=${intervalMinutes}`);
     try {
-      await runPythonScanner();
+      await startPythonScannerJob();
       if (config.docRef) {
         await updateLastRun(config.docRef);
       }
-      console.log('Scheduled market scan completed successfully');
+      console.log('Scheduled market scan job submitted successfully');
     } catch (error) {
       console.error('Scheduled market scan failed', error);
       throw error;

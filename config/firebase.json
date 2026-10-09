@@ -1,4 +1,4 @@
 {
-  "enabled": false,
-  "project_id": null
+  "enabled": true,
+  "project_id": "jasperpos-dev"
 }

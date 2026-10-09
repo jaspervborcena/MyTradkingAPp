@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 from pathlib import Path
 
@@ -80,6 +81,11 @@ async def _run_service(config) -> None:
         data_logger,
         config.strategies,
     )
+    if os.environ.get("SCAN_ONCE", "").lower() == "true":
+        LOGGER.info("single_scan_started")
+        await scanner.scan_once()
+        LOGGER.info("single_scan_completed")
+        return
     await run(stop_event, scanner, config.environment.scan_interval_seconds)
 
 
