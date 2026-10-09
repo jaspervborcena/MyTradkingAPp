@@ -1,0 +1,11 @@
+services:
+  tradingapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tradingapp
+    environment:
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - .:/app
+    command: python -m src.main

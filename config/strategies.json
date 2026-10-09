@@ -1,0 +1,9 @@
+{
+  "strategies": [
+    {
+      "name": "trend_follow",
+      "enabled": true,
+      "min_confidence": 0.3
+    }
+  ]
+}

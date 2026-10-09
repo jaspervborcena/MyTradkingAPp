@@ -1,0 +1,3 @@
+pandas>=2.2.0
+pandas-ta>=0.3.14b0
+google-cloud-firestore>=2.18.0

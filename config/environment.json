@@ -1,0 +1,5 @@
+{
+  "app_environment": "test",
+  "log_level": "INFO",
+  "scan_interval_seconds": 300
+}
