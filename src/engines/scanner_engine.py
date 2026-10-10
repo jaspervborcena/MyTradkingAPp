@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from src.models.config import BinanceConfig
 from src.models.market import MarketObservation, SignalEvent
+from src.models.risk_profile import RiskProfile
 from src.services.binance_service import BinanceService
 from src.services.data_logger_service import JsonlDataLogger
 from src.services.indicator_service import IndicatorService
@@ -23,12 +24,14 @@ class ScannerEngine:
         market_data: BinanceService,
         data_logger: JsonlDataLogger,
         strategies: tuple[dict[str, object], ...] = (),
+        risk_profile: RiskProfile | None = None,
     ) -> None:
         self._symbols = symbols
         self._config = binance_config
         self._market_data = market_data
         self._data_logger = data_logger
         self._strategies = strategies
+        self._risk_profile = risk_profile
         self._last_logged_open_time: dict[str, datetime] = {}
 
     async def scan_once(self) -> None:
@@ -58,12 +61,20 @@ class ScannerEngine:
             symbol=symbol,
             timeframe=self._config.timeframe,
             candle=candle,
+            profile_name=self._risk_profile.profile_name if self._risk_profile else None,
         )
         await self._data_logger.log_observation(observation)
         self._last_logged_open_time[symbol] = candle.open_time
 
         try:
-            snapshot = IndicatorService.compute(candles, symbol, self._config.timeframe)
+            snapshot = IndicatorService.compute(
+                candles,
+                symbol,
+                self._config.timeframe,
+                sma_fast=self._risk_profile.sma_fast if self._risk_profile else 5,
+                sma_slow=self._risk_profile.sma_slow if self._risk_profile else 20,
+                rsi_period=self._risk_profile.rsi_period if self._risk_profile else 14,
+            )
             for strategy in self._strategies:
                 signal = StrategyService.evaluate(snapshot, strategy)
                 signal_event = SignalEvent(
@@ -77,6 +88,10 @@ class ScannerEngine:
                     confidence=float(signal["confidence"]),
                     reasons=tuple(str(reason) for reason in signal["reasons"]),
                     indicator_snapshot=snapshot.to_dict(),
+                    profile_name=self._risk_profile.profile_name if self._risk_profile else None,
+                    strategy_parameters=(
+                        self._risk_profile.strategy_parameters() if self._risk_profile else None
+                    ),
                 )
                 await self._data_logger.log_signal(signal_event)
         except ValueError:

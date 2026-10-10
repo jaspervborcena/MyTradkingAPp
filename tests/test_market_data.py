@@ -14,11 +14,12 @@ from urllib.parse import parse_qs, urlparse
 from src.engines.scanner_engine import ScannerEngine
 from src.models.config import BinanceConfig, load_config
 from src.models.market import Candle, SignalEvent
+from src.models.risk_profile import RiskProfile, RiskProfileError
 from src.services.binance_service import BinanceService, MarketDataError
 from src.services.data_logger_service import JsonlDataLogger
 from src.services.event_sink_service import JsonlEventSink
 from src.services.event_store_service import JsonlEventStore
-from src.services.firestore_service import FirestoreEventSink
+from src.services.firestore_service import FirestoreEventSink, FirestoreRiskProfileRepository
 from src.services.indicator_service import IndicatorService
 from src.services.strategy_service import StrategyService
 
@@ -31,8 +32,65 @@ def sample_kline(open_time: int = 1_725_000_000_000) -> list[object]:
     return [open_time, "100.0", "110.0", "95.0", "105.0", "12.5", open_time + 59_999]
 
 
+def sample_risk_profile() -> dict[str, object]:
+    return {
+        "profile_name": "high",
+        "enabled": True,
+        "symbols": ["solusdt", "AVAXUSDT"],
+        "strategy": {
+            "sma_fast": 3,
+            "sma_slow": 10,
+            "rsi_period": 14,
+            "min_confidence_score": 75.0,
+            "target_buy_spread_pct": 1.5,
+            "target_sell_spread_pct": 2.5,
+            "stop_loss_pct": 3.0,
+        },
+    }
+
+
+class RiskProfileTests(unittest.TestCase):
+    def test_loads_and_normalizes_firestore_profile(self) -> None:
+        profile = RiskProfile.from_document("high", sample_risk_profile())
+
+        self.assertIsNotNone(profile)
+        assert profile is not None
+        self.assertEqual(profile.symbols, ("SOLUSDT", "AVAXUSDT"))
+        self.assertEqual(profile.strategy_config()["min_confidence"], 0.75)
+        self.assertEqual(profile.strategy_parameters()["stop_loss_pct"], 3.0)
+
+    def test_rejects_invalid_confidence_and_unknown_profile(self) -> None:
+        invalid_document = sample_risk_profile()
+        invalid_document["strategy"]["min_confidence_score"] = 101.0
+
+        with self.assertRaisesRegex(RiskProfileError, "min_confidence_score"):
+            RiskProfile.from_document("high", invalid_document)
+        with self.assertRaisesRegex(RiskProfileError, "PROFILE must be"):
+            RiskProfile.from_document("other", sample_risk_profile())
+
+    def test_disabled_profile_is_not_loaded(self) -> None:
+        document = {"enabled": False}
+
+        self.assertIsNone(RiskProfile.from_document("slow", document))
+
+    def test_firestore_repository_loads_profile_document(self) -> None:
+        snapshot = Mock(exists=True)
+        snapshot.to_dict.return_value = sample_risk_profile()
+        document = Mock()
+        document.get.return_value = snapshot
+        collection = Mock()
+        collection.document.return_value = document
+        client = Mock()
+        client.collection.return_value = collection
+
+        profile = FirestoreRiskProfileRepository(client).get("high")
+
+        collection.document.assert_called_once_with("high")
+        self.assertEqual(profile.profile_name, "high")
+
+
 class BinanceServiceTests(unittest.IsolatedAsyncioTestCase):
-    async def test_uses_configured_testnet_and_parses_candle(self) -> None:
+    async def test_uses_configured_production_endpoint_and_parses_candle(self) -> None:
         service = BinanceService(CONFIG.binance)
         with patch.object(service, "_get_json", return_value=[sample_kline()]) as request:
             candles = await service.fetch_candles("btcusdt")
@@ -40,7 +98,7 @@ class BinanceServiceTests(unittest.IsolatedAsyncioTestCase):
         request_url = request.call_args.args[0]
         parsed_url = urlparse(request_url)
         query = parse_qs(parsed_url.query)
-        self.assertEqual(parsed_url.netloc, "testnet.binance.vision")
+        self.assertEqual(parsed_url.netloc, "api.binance.com")
         self.assertEqual(query["symbol"], ["BTCUSDT"])
         self.assertEqual(query["interval"], ["1m"])
         self.assertEqual(query["limit"], ["100"])
@@ -93,6 +151,49 @@ class BinanceServiceTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ScannerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_profile_controls_indicators_and_tags_events(self) -> None:
+        candles = tuple(
+            Candle(
+                open_time=datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=index),
+                close_time=datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=index, seconds=59),
+                open=float(100 + index),
+                high=float(102 + index),
+                low=float(99 + index),
+                close=float(101 + index),
+                volume=100.0,
+            )
+            for index in range(35)
+        )
+        profile = RiskProfile.from_document("high", sample_risk_profile())
+        assert profile is not None
+
+        class StubMarketData:
+            async def fetch_candles(self, symbol: str) -> tuple[Candle, ...]:
+                return candles
+
+        with TemporaryDirectory() as temporary_directory:
+            output_path = Path(temporary_directory) / "observations.jsonl"
+            scanner = ScannerEngine(
+                profile.symbols[:1],
+                CONFIG.binance,
+                StubMarketData(),
+                JsonlDataLogger(output_path),
+                (profile.strategy_config(),),
+                risk_profile=profile,
+            )
+
+            await scanner.scan_once()
+
+            observation = json.loads(output_path.read_text(encoding="utf-8").splitlines()[0])
+            signal = json.loads(
+                output_path.with_name("market_signals.jsonl").read_text(encoding="utf-8").splitlines()[0]
+            )
+
+        self.assertEqual(observation["profile_name"], "high")
+        self.assertEqual(signal["profile_name"], "high")
+        self.assertEqual(signal["strategy_parameters"]["sma_fast"], 3)
+        self.assertAlmostEqual(signal["indicator_snapshot"]["sma_fast"], 134.0)
+
     async def test_logs_latest_closed_candle_once_per_symbol(self) -> None:
         now = datetime.now(timezone.utc)
         candles = (

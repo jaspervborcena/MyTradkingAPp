@@ -1,5 +1,5 @@
 {
-  "environment": "testnet",
+  "environment": "production",
   "market_type": "spot",
   "timeframe": "1m",
   "candle_limit": 100,

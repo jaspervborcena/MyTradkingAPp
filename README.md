@@ -2,6 +2,16 @@
 
 Python background service for scanning cryptocurrency markets, evaluating configurable strategies, and recording structured data for later analysis. The Angular dashboard will be built in a separate project and is out of scope here.
 
+## What the app does
+
+This repository runs a read-only cryptocurrency market scanner. It requests public Binance Spot candle data for configured symbols, waits for candles to close, calculates trend indicators, evaluates enabled strategies, and records both market observations and accepted or rejected signal events. The current strategy uses 5- and 20-candle simple moving averages to identify a trend, RSI to estimate confidence, and a configured minimum-confidence threshold to decide whether a buy/sell signal is accepted. A signal is analysis output only; it is not an order.
+
+With the checked-in configuration, it scans `BTCUSDT` and `ETHUSDT` using one-minute candles from Binance's public production Spot market-data endpoint. This is real market data and does not require an API key. It appends observations and signals to JSONL files under `data/`, and writes the same event types to Firestore's `market_events` collection when Firestore is enabled and credentials are available. Each scan handles the latest closed candle for each symbol; the local runner avoids logging the same candle twice during that process run.
+
+The app can run as a local background process or as a one-shot Cloud Run Job submitted by the scheduled Firebase function. The local runner interval is configured in `config/environment.json`. In the scheduled deployment, `app_config` controls whether the function launches a scan and its minimum-interval gate; the scheduler itself triggers every five minutes. Binance endpoint, symbols, timeframe, and strategy thresholds are configured separately in `config/`. The checked-in config now selects production public market data; the already-deployed Cloud Run Job continues to use its previous testnet image until it is rebuilt and redeployed. Neither path places orders.
+
+There is no frontend in this repository. The Angular dashboard is a separate planned project, and trade execution, paper-trade lifecycle tracking, and user administration are not implemented here.
+
 ## Project Status
 
 **Stage:** Phases 1 through 4 are complete. Phase 5 is deployed and verified for scheduled, signal-only scanning with Firestore persistence.
@@ -24,7 +34,7 @@ Python background service for scanning cryptocurrency markets, evaluating config
 
 ### Current live configuration
 
-The scanner is enabled in test mode. It reads public Binance Spot Testnet market data and does not place orders:
+The currently deployed scanner is enabled in test mode. It reads public Binance Spot Testnet market data and does not place orders. The checked-in `config/binance.json` now selects production public market data for local runs and the next Job deployment:
 
 ```json
 {
@@ -42,7 +52,7 @@ Cloud Scheduler triggers the Firebase function every 5 minutes. `interval_minute
 - GitHub: synced and pushed
 - Firebase project target: `jasperpos-dev`
 - Cloud Scheduler: active, every 5 minutes
-- Firebase function: `trading_scanMarket`, submits the Python Cloud Run Job
+- Firebase functions: `trading_scanMarket_high`, `trading_scanMarket_medium`, and `trading_scanMarket_slow`, submit profile-specific executions of the Python Cloud Run Job
 - Cloud Run Job: `trading-market-scan` in `asia-southeast1`
 - Firestore: verified observation and signal documents in `market_events`
 - Runtime model: signal-only test mode, no live trading enabled
@@ -76,7 +86,7 @@ Cloud Scheduler triggers the Firebase function every 5 minutes. `interval_minute
 
 ```text
 Firestore app_config -> Firebase scheduled function -> Cloud Run Job (asia-southeast1)
-                                                        -> Python scanner -> Binance Spot Testnet
+                                                        -> Python scanner -> Binance Spot public market data
                                                         -> observations/signals -> Firestore market_events
 ```
 
@@ -124,7 +134,7 @@ The Angular `frontend/` directory from the original outline is intentionally omi
 
 **Complete:** all 11 unit tests pass with mocked exchange responses; live public testnet checks fetched 100 BTCUSDT candles and wrote observations for BTCUSDT and ETHUSDT. No credentials or order endpoints are used.
 
-**Current defaults:** Binance Spot Testnet, symbols `BTCUSDT` and `ETHUSDT`, `1m` candles, 100 candles requested per symbol, and a 300-second local runner interval. Change these in `config/binance.json`, `config/assets.json`, and `config/environment.json`. Production market-data access can be selected in config; order placement is not implemented.
+**Current config:** Binance Spot production public market data, symbols `BTCUSDT` and `ETHUSDT`, `1m` candles, 100 candles requested per symbol, and a 300-second local runner interval. Change these in `config/binance.json`, `config/assets.json`, and `config/environment.json`. The existing Cloud Run Job remains on its deployed testnet image until redeployed; order placement is not implemented.
 
 ### Phase 3: Indicators, strategies, and risk
 
@@ -163,7 +173,7 @@ The Angular `frontend/` directory from the original outline is intentionally omi
 ## Decisions To Confirm
 
 - **Indicators:** `pandas-ta` is selected for Python 3.13 compatibility.
-- **Markets:** current defaults are Binance Spot Testnet, `BTCUSDT`/`ETHUSDT`, `1m`, and a 300-second local runner interval; scheduled Cloud scans are triggered every 5 minutes.
+- **Markets:** checked-in config uses Binance Spot production public data for `BTCUSDT`/`ETHUSDT`, `1m` candles, and a 300-second local runner interval. The deployed Cloud Run Job remains on testnet until redeployed; scheduled Cloud scans are triggered every 5 minutes.
 - **Storage:** observations and signal events are currently written to `market_events`; retention and future collection separation remain open.
 - **Runtime configuration:** JSON files for non-secret settings; environment variables or managed identity for credentials and deployment-specific values.
 
@@ -189,7 +199,7 @@ Run the tests:
 python -m unittest discover -s tests -v
 ```
 
-Start the background runner from the repository root. It connects to the configured public Binance market-data endpoint, scans the configured symbols, and appends closed-candle observations to `data/market_observations.jsonl`. It also writes signal events to `data/market_signals.jsonl` when a strategy evaluates. The default endpoint is Spot Testnet; no trading calls are made.
+Start the background runner from the repository root. It connects to the configured public Binance market-data endpoint, scans the configured symbols, and appends closed-candle observations to `data/market_observations.jsonl`. It also writes signal events to `data/market_signals.jsonl` when a strategy evaluates. The checked-in endpoint is Spot production; only public market data is requested, and no trading calls are made.
 
 ```powershell
 python -m src.main
@@ -208,7 +218,7 @@ Or with Docker Compose:
 docker compose up --build
 ```
 
-To smoke-test one public testnet request without starting the runner:
+To smoke-test one public production-market-data request without starting the runner:
 
 ```powershell
 python -c "import asyncio; from src.models.config import load_config; from src.services.binance_service import BinanceService; candles = asyncio.run(BinanceService(load_config().binance).fetch_candles('BTCUSDT')); print(f'Fetched {len(candles)} candles')"
@@ -222,7 +232,7 @@ For the Firebase-backed production design, see [docs/FIRESTORE_COLLECTIONS.md](d
 
 For a low-cost, low-risk schedule-based deployment, use Firebase Functions with Cloud Scheduler. The repository includes a prefixed function named `trading_scanMarket` in [functions/index.js](functions/index.js).
 
-The scheduled function submits a one-shot Python execution to the Cloud Run Job `trading-market-scan`; it does not run Python inside the Node.js function. The Job is deployed in `asia-southeast1` because Binance testnet returned HTTP 451 from `us-central1`. Keep the Job's runtime identity authorized for Firestore writes and the function identity authorized to execute Cloud Run Jobs.
+The scheduled functions `trading_scanMarket_high`, `trading_scanMarket_medium`, and `trading_scanMarket_slow` submit one-shot Python executions to the shared Cloud Run Job `trading-market-scan`, passing the corresponding `PROFILE` override. Each execution loads `risk_profiles/{PROFILE}` from Firestore before requesting Binance data. The Job is deployed in `asia-southeast1` because Binance testnet returned HTTP 451 from `us-central1`. Keep the Job's runtime identity authorized for Firestore reads and writes and the function identity authorized to execute Cloud Run Jobs. See [docs/FIRESTORE_COLLECTIONS.md](docs/FIRESTORE_COLLECTIONS.md) for the profile schema.
 
 ### 1. Install Firebase tools
 
@@ -245,7 +255,7 @@ gcloud run jobs deploy trading-market-scan --source . --project jasperpos-dev --
 firebase deploy --only functions --project jasperpos-dev
 ```
 
-The live scheduler runs every 5 minutes. Runtime behavior is controlled by the Firestore config document in `app_config`; `enabled` turns scans on or off, `mode` remains `test`, and `interval_minutes` provides an additional minimum interval. The effective cadence cannot exceed the Cloud Scheduler cadence. The function name is `trading_scanMarket`.
+The live scheduler runs every 5 minutes. `app_config.enabled` is a global pause switch; each `risk_profiles/{high|medium|slow}` document independently controls its scan with `enabled` and optional `interval_minutes`. Keep `mode` set to `test`. The effective cadence cannot exceed the Cloud Scheduler cadence.
 
 Example Firestore document fields:
 
@@ -288,7 +298,7 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 
 - Keep secrets in Google Secret Manager or workload identity, not in the image or repository.
 - Continue to keep order execution disabled by default.
-- Use the public Binance testnet endpoint unless a later milestone explicitly authorizes production access.
+- Use only public market-data endpoints for scanning. Production market data is unauthenticated; keep trading endpoints and order placement disabled unless separately approved.
 - The Job uses its service identity for Firestore writes; do not add service-account key files to the repository.
 - Keep request pacing and scheduled frequency conservative.
 

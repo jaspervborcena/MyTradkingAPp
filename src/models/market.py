@@ -53,9 +53,11 @@ class SignalEvent:
     confidence: float
     reasons: tuple[str, ...]
     indicator_snapshot: dict[str, object]
+    profile_name: str | None = None
+    strategy_parameters: dict[str, int | float] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": 1,
             "event_id": self.event_id,
             "event_type": "signal",
@@ -69,6 +71,10 @@ class SignalEvent:
             "reasons": list(self.reasons),
             "indicator_snapshot": self.indicator_snapshot,
         }
+        if self.profile_name is not None:
+            payload["profile_name"] = self.profile_name
+            payload["strategy_parameters"] = self.strategy_parameters
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,9 +85,10 @@ class MarketObservation:
     symbol: str
     timeframe: str
     candle: Candle
+    profile_name: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": 1,
             "event_id": self.event_id,
             "captured_at": self.captured_at.isoformat(),
@@ -98,3 +105,6 @@ class MarketObservation:
                 "volume": self.candle.volume,
             },
         }
+        if self.profile_name is not None:
+            payload["profile_name"] = self.profile_name
+        return payload

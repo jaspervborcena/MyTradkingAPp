@@ -10,9 +10,10 @@ from pathlib import Path
 
 from src.engines.scanner_engine import ScannerEngine
 from src.models.config import ConfigError, load_config
+from src.models.risk_profile import RiskProfileError
 from src.services.binance_service import BinanceService
 from src.services.data_logger_service import JsonlDataLogger
-from src.services.firestore_service import FirestoreEventSink
+from src.services.firestore_service import FirestoreEventSink, FirestoreRiskProfileRepository
 from src.utils.logger import configure_logging
 
 LOGGER = logging.getLogger("crypto_bot")
@@ -49,7 +50,7 @@ def _install_signal_handlers(stop_event: asyncio.Event) -> None:
             )
 
 
-def _build_firestore_sink(config) -> FirestoreEventSink | None:
+def _build_firestore_client(config):
     if not config.firebase.enabled:
         return None
     try:
@@ -62,24 +63,45 @@ def _build_firestore_sink(config) -> FirestoreEventSink | None:
     except Exception as error:  # pragma: no cover - defensive runtime guard
         LOGGER.warning("firestore_client_init_failed project_id=%s error=%s", config.firebase.project_id, error)
         return None
-    return FirestoreEventSink(config.firebase.project_id, client=client)
+    return client
 
 
 async def _run_service(config) -> None:
     stop_event = asyncio.Event()
     _install_signal_handlers(stop_event)
     market_data = BinanceService(config.binance)
-    remote_sink = _build_firestore_sink(config)
+    profile_name = os.environ.get("PROFILE")
+    firestore_client = _build_firestore_client(config)
+    if profile_name and firestore_client is None:
+        raise RuntimeError("PROFILE requires Firestore to be enabled and available")
+    risk_profile = None
+    if profile_name:
+        risk_profile = await asyncio.to_thread(
+            FirestoreRiskProfileRepository(firestore_client).get,
+            profile_name,
+        )
+        if risk_profile is None:
+            LOGGER.info("risk_profile_disabled profile_name=%s", profile_name)
+            return
+        if max(risk_profile.sma_slow, risk_profile.rsi_period + 1) > config.binance.candle_limit:
+            raise RiskProfileError("profile indicator periods cannot exceed Binance candle_limit")
+        LOGGER.info(
+            "risk_profile_loaded profile_name=%s symbols=%d",
+            risk_profile.profile_name,
+            len(risk_profile.symbols),
+        )
+    remote_sink = FirestoreEventSink(config.firebase.project_id, client=firestore_client) if firestore_client else None
     data_logger = JsonlDataLogger(
         Path("data/market_observations.jsonl"),
         remote_sink=remote_sink,
     )
     scanner = ScannerEngine(
-        config.symbols,
+        risk_profile.symbols if risk_profile else config.symbols,
         config.binance,
         market_data,
         data_logger,
-        config.strategies,
+        (risk_profile.strategy_config(),) if risk_profile else config.strategies,
+        risk_profile=risk_profile,
     )
     if os.environ.get("SCAN_ONCE", "").lower() == "true":
         LOGGER.info("single_scan_started")
@@ -100,6 +122,9 @@ def main() -> int:
     configure_logging(config.environment.log_level)
     try:
         asyncio.run(_run_service(config))
+    except (RiskProfileError, RuntimeError) as error:
+        LOGGER.error("configuration_error: %s", error)
+        return 2
     except KeyboardInterrupt:
         LOGGER.info("runner_interrupted")
     return 0

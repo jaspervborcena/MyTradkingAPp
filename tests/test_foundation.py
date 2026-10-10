@@ -20,7 +20,7 @@ class ConfigTests(unittest.TestCase):
         config = load_config(ROOT / "config")
 
         self.assertEqual(config.environment.app_environment, "test")
-        self.assertEqual(config.binance.environment, "testnet")
+        self.assertEqual(config.binance.environment, "production")
         self.assertEqual(config.symbols, ("BTCUSDT", "ETHUSDT"))
         self.assertFalse(config.firebase.enabled)
 

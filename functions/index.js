@@ -15,7 +15,7 @@ setGlobalOptions({
   memory: '1GiB',
 });
 
-async function startPythonScannerJob() {
+async function startPythonScannerJob(profileName) {
   const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || admin.app().options.projectId;
   if (!projectId) {
     throw new Error('Google Cloud project ID is not available to the scheduled function');
@@ -31,7 +31,13 @@ async function startPythonScannerJob() {
       Authorization: `Bearer ${token.token || token}`,
       'Content-Type': 'application/json',
     },
-    body: '{}',
+    body: JSON.stringify(profileName ? {
+      overrides: {
+        containerOverrides: [{
+          env: [{ name: 'PROFILE', value: profileName }],
+        }],
+      },
+    } : {}),
   });
 
   if (!response.ok) {
@@ -40,6 +46,53 @@ async function startPythonScannerJob() {
 
   const operation = await response.json();
   console.log(`scanner_job_started name=${jobName} operation=${operation.name || 'unknown'}`);
+}
+
+function scheduleRiskProfile(profileName) {
+  return onSchedule(
+    {
+      schedule: scheduleExpression,
+      timeZone: 'UTC',
+      retryCount: 1,
+      region: 'us-central1',
+    },
+    async () => {
+      const appConfig = await getAppConfig();
+      if (!appConfig.enabled) {
+        console.log(`Skipping ${profileName} scan because app_config.enabled is false`);
+        return;
+      }
+
+      const profileRef = getFirestore().collection('risk_profiles').doc(profileName);
+      const snapshot = await profileRef.get();
+      if (!snapshot.exists) {
+        console.warn(`Skipping ${profileName} scan because risk_profiles/${profileName} is missing`);
+        return;
+      }
+      const profile = snapshot.data() || {};
+      if (profile.enabled !== true) {
+        console.log(`Skipping ${profileName} scan because the profile is disabled`);
+        return;
+      }
+
+      const intervalMinutes = Number(profile.interval_minutes ?? 5);
+      if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
+        throw new Error(`risk_profiles/${profileName}.interval_minutes must be a positive number`);
+      }
+      const lastRunAt = profile.last_run_at;
+      if (lastRunAt && lastRunAt.toDate) {
+        const elapsedMinutes = (Date.now() - lastRunAt.toDate().getTime()) / 60000;
+        if (elapsedMinutes < intervalMinutes) {
+          console.log(`Skipping ${profileName} scan; last run was ${elapsedMinutes.toFixed(1)} minutes ago`);
+          return;
+        }
+      }
+
+      await startPythonScannerJob(profileName);
+      await profileRef.set({ last_run_at: FieldValue.serverTimestamp() }, { merge: true });
+      console.log(`Scheduled ${profileName} market scan submitted successfully`);
+    },
+  );
 }
 
 async function getAppConfig() {
@@ -77,55 +130,6 @@ async function getAppConfig() {
   }
 }
 
-async function updateLastRun(docRef) {
-  if (!docRef) {
-    return;
-  }
-
-  await docRef.set({ last_run_at: FieldValue.serverTimestamp() }, { merge: true });
-}
-
-exports.trading_scanMarket = onSchedule(
-  {
-    schedule: scheduleExpression,
-    timeZone: 'UTC',
-    retryCount: 1,
-    region: 'us-central1',
-  },
-  async () => {
-    const config = await getAppConfig();
-
-    if (!config.enabled) {
-      console.log('Skipping scheduled scan because app_config.enabled is false');
-      return;
-    }
-
-    if (config.mode !== 'test' && config.mode !== 'prod') {
-      console.log(`Unsupported app mode: ${config.mode}; defaulting to test`);
-    }
-
-    const intervalMinutes = Number(config.interval_minutes ?? 15);
-    const docData = config.docRef ? (await config.docRef.get()).data() || {} : {};
-    const lastRunAt = docData.last_run_at;
-
-    if (lastRunAt && lastRunAt.toDate) {
-      const elapsedMinutes = (Date.now() - lastRunAt.toDate().getTime()) / 60000;
-      if (elapsedMinutes < intervalMinutes) {
-        console.log(`Skipping scan because last_run_at was ${elapsedMinutes.toFixed(1)} minutes ago and interval_minutes=${intervalMinutes}`);
-        return;
-      }
-    }
-
-    console.log(`Starting scheduled market scan for mode=${config.mode || 'test'} interval_minutes=${intervalMinutes}`);
-    try {
-      await startPythonScannerJob();
-      if (config.docRef) {
-        await updateLastRun(config.docRef);
-      }
-      console.log('Scheduled market scan job submitted successfully');
-    } catch (error) {
-      console.error('Scheduled market scan failed', error);
-      throw error;
-    }
-  }
-);
+exports.trading_scanMarket_high = scheduleRiskProfile('high');
+exports.trading_scanMarket_medium = scheduleRiskProfile('medium');
+exports.trading_scanMarket_slow = scheduleRiskProfile('slow');
