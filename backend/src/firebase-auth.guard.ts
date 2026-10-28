@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
@@ -14,6 +15,8 @@ interface AuthenticatedRequest extends Request {
 
 @Injectable()
 export class FirebaseAuthGuard implements CanActivate {
+  private readonly logger = new Logger(FirebaseAuthGuard.name);
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const authorization = request.headers.authorization;
@@ -28,7 +31,12 @@ export class FirebaseAuthGuard implements CanActivate {
     let user: DecodedIdToken;
     try {
       user = await firebaseAuth.verifyIdToken(token, true);
-    } catch {
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error
+        && typeof error.code === 'string'
+        ? error.code
+        : 'unknown';
+      this.logger.warn(`firebase_id_token_verification_failed code=${code}`);
       throw new UnauthorizedException('The Firebase ID token is invalid or expired.');
     }
 
