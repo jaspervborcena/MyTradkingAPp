@@ -24,6 +24,10 @@ export class ScannerService implements OnApplicationBootstrap, OnApplicationShut
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    if (process.env.API_ONLY?.toLowerCase() === 'true') {
+      return;
+    }
+
     const profileName = process.env.PROFILE;
     if (profileName) {
       this.profile = await this.loadProfile(profileName);

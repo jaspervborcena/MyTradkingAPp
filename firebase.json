@@ -1,5 +1,12 @@
 {
   "functions": {
-    "source": "functions"
+    "source": "functions",
+    "predeploy": [
+      "npm --prefix backend run build",
+      "node functions/stage-backend.js"
+    ],
+    "postdeploy": [
+      "node functions/cleanup-backend.js"
+    ]
   }
 }

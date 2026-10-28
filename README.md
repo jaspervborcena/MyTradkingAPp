@@ -52,6 +52,10 @@ For profile-driven scans, set `PROFILE` to `high`, `medium`, or `slow`; the proc
 
 The authenticated `GET /api/binance/account` endpoint reads its Binance credentials from Google Secret Manager. Configure the runtime identity and Firebase Auth access as described in [docs/SECRET_MANAGER.md](docs/SECRET_MANAGER.md). The API key must be read-only; the endpoint does not place orders.
 
+See [docs/API.md](docs/API.md) for the HTTP endpoint contract, Firebase ID-token usage, response/error examples, and Angular UI integration.
+
+The API is deployed as the Firebase HTTPS function `binanceApi` in `mytradingapp-50d29`: `https://binanceapi-3evfzkw3na-uc.a.run.app`.
+
 ## Docker
 
 ```powershell

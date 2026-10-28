@@ -1,6 +1,7 @@
 const admin = require('firebase-admin');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onRequest } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { GoogleAuth } = require('google-auth-library');
 
@@ -133,3 +134,25 @@ async function getAppConfig() {
 exports.trading_scanMarket_high = scheduleRiskProfile('high');
 exports.trading_scanMarket_medium = scheduleRiskProfile('medium');
 exports.trading_scanMarket_slow = scheduleRiskProfile('slow');
+
+exports.binanceApi = onRequest(
+  {
+    region: 'us-central1',
+    timeoutSeconds: 60,
+    memory: '512MiB',
+    serviceAccount: 'binance-api-runtime@mytradingapp-50d29.iam.gserviceaccount.com',
+    invoker: 'public',
+  },
+  async (request, response) => {
+    try {
+      const { getServerlessApplication } = require('./backend/runtime/serverless');
+      const app = await getServerlessApplication();
+      app(request, response);
+    } catch (error) {
+      console.error('binance_api_initialization_failed', error);
+      if (!response.headersSent) {
+        response.status(500).json({ statusCode: 500, message: 'API initialization failed' });
+      }
+    }
+  },
+);

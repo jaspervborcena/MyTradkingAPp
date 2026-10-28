@@ -17,6 +17,9 @@ export class BinanceSecretsService {
 
   async getCredentials(): Promise<BinanceApiCredentials> {
     const projectId = process.env.SECRET_MANAGER_PROJECT_ID
+      ?? process.env.GOOGLE_CLOUD_PROJECT
+      ?? process.env.GCLOUD_PROJECT
+      ?? process.env.GCP_PROJECT
       ?? this.appConfig.config.firebase.project_id;
     if (!projectId) {
       throw new ServiceUnavailableException(
