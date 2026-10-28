@@ -59,15 +59,15 @@ This checklist covers the background scanner runtime only. The scanner remains s
   ```
 - [ ] Create the image repository:
   ```powershell
-  gcloud artifacts repositories create tradingapp-repo --repository-format=docker --location=us-central1
+  gcloud artifacts repositories create tradingapp-repo --repository-format=docker --location=asia-east1
   ```
 - [ ] Build and push the image:
   ```powershell
-  gcloud builds submit --tag us-central1-docker.pkg.dev/jasperpos-dev/tradingapp-repo/tradingapp:latest .
+  gcloud builds submit --tag asia-east1-docker.pkg.dev/jasperpos-dev/tradingapp-repo/tradingapp:latest .
   ```
 - [ ] Deploy the service:
   ```powershell
-  gcloud run deploy tradingapp --image us-central1-docker.pkg.dev/jasperpos-dev/tradingapp-repo/tradingapp:latest --platform managed --region us-central1 --allow-unauthenticated --memory 512Mi --cpu 1 --max-instances 1
+  gcloud run deploy tradingapp --image asia-east1-docker.pkg.dev/jasperpos-dev/tradingapp-repo/tradingapp:latest --platform managed --region asia-east1 --allow-unauthenticated --memory 512Mi --cpu 1 --max-instances 1
   ```
 
 ## 6. Cloud Run safety checks

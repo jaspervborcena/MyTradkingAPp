@@ -193,9 +193,12 @@ Suggested document shape:
   "email": "user@example.com",
   "role": "admin|viewer|operator",
   "created_at": "2026-10-09T12:00:00Z",
-  "status": "active|disabled"
+  "status": "active|disabled",
+  "watchlist": ["BTCUSDT", "ETHUSDT"]
 }
 ```
+
+The authenticated analysis endpoint reads `watchlist` from `users/{firebaseUid}`. Store uppercase USDT-quoted Binance Spot symbols in this array; the API limits any single analysis request to 20 symbols. Per-user request counters are stored separately in `analysis_request_quotas/{firebaseUid}` and are operational data, not a user-facing watchlist.
 
 ## Default collection for the MVP
 

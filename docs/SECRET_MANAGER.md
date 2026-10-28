@@ -1,4 +1,4 @@
-# Binance credentials and Firebase access
+# Backend secrets and Firebase access
 
 The NestJS Binance API reads the shared credentials from Google Secret Manager for account reads and optional manual Spot market orders.
 
@@ -8,8 +8,17 @@ The API reads the latest versions of these Secret Manager secrets:
 
 - `BINANCE_API_KEY`
 - `BINANCE_SECRET`
+- `OPENAI_SECRET` (Firebase Functions secret used by the watchlist analysis endpoint)
 
 By default, the project ID comes from `config/firebase.json` (`jasperpos-dev`). Set `SECRET_MANAGER_PROJECT_ID` only if the secrets are stored in a different Google Cloud project. Secret IDs can be overridden with `BINANCE_API_KEY_SECRET_ID` and `BINANCE_SECRET_SECRET_ID`; do not set these to secret values.
+
+The Firebase HTTPS function binds the existing `OPENAI_SECRET` Secret Manager secret and reads its value as the `OPENAI_SECRET` environment variable. Set `OPENAI_MODEL` as a server-side environment variable (for example in the project's uncommitted `.env.<project-id>` file) to a model that supports the Responses API and strict Structured Outputs. The backend returns a service-unavailable error if either value is missing. Never put the key in Angular configuration, source code, container build arguments, or request logs.
+
+The function runs as `binance-api-runtime@mytradingapp-50d29.iam.gserviceaccount.com`. If the Firebase deployment has not already granted this identity access to the bound secret, grant access explicitly:
+
+```powershell
+gcloud secrets add-iam-policy-binding OPENAI_SECRET --project mytradingapp-50d29 --member="serviceAccount:binance-api-runtime@mytradingapp-50d29.iam.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+```
 
 ## Runtime permissions
 

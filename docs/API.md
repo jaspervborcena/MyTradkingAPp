@@ -1,6 +1,6 @@
 # NestJS API and UI integration
 
-This document describes the HTTP API implemented in `backend/` and how an authenticated UI can call it. The API checks a user's Binance integration flag, reads balances, and supports manually confirmed Binance Spot market buy/sell orders. It does not provide automated strategy execution, limit orders, withdrawals, or market-signal query endpoints.
+This document describes the HTTP API implemented in `backend/` and how an authenticated UI can call it. The API checks a user's Binance integration flag, reads balances, supports manually confirmed Binance Spot market buy/sell orders, and provides informational OpenAI analysis of the signed-in user's watchlist. It does not provide automated strategy execution, limit orders, withdrawals, or market-signal query endpoints.
 
 ## Base URL
 
@@ -31,6 +31,77 @@ The backend verifies the token with Firebase Admin, including checking revocatio
 Never put Firebase Admin credentials, Binance credentials, or service-account keys in the UI. The UI obtains a short-lived ID token from the Firebase client SDK and sends it to the API. The Binance credentials are fetched server-side from Secret Manager. See [SECRET_MANAGER.md](./SECRET_MANAGER.md) for runtime IAM setup.
 
 ## Endpoints
+
+### `POST /api/analysis/watchlist`
+
+Analyzes symbols from the authenticated user's Firestore watchlist using fresh public Binance Spot data and the server-configured OpenAI model. The user identity always comes from the verified Firebase ID token; request bodies do not accept a UID.
+
+The watchlist is read from `users/{firebaseUid}.watchlist`, an array of uppercase USDT Spot symbols. Omit `symbols` to analyze the full watchlist, or provide a non-empty selection of up to 20 symbols. Every requested symbol must already be in that user's watchlist.
+
+The UI should call this NestJS HTTP endpoint (not the `getBinanceStatus` callable) using the `binanceApi` base URL from the [Base URL](#base-url) section:
+
+```http
+POST https://asia-east1-mytradingapp-50d29.cloudfunctions.net/binanceApi/api/analysis/watchlist
+Authorization: Bearer <Firebase ID token>
+Content-Type: application/json
+```
+
+```json
+{
+  "symbols": ["BTCUSDT", "ETHUSDT"]
+}
+```
+
+The backend fetches Binance's 24-hour Spot ticker and configured interval klines, discards unclosed candles, then computes EMA 20, EMA 50, RSI 14, 24-hour percentage change, and 24-hour base-asset volume. If candles are unavailable or fewer than 50 closed candles are available, missing indicators are `null`; stale/missing data is marked and described rather than inferred. Numeric `supportingIndicators` and `dataFreshness` fields are backend-sourced facts. The model generates cautious explanations only; the result is informational, not financial advice, and is not a prediction or guarantee.
+
+Successful responses have this shape:
+
+```json
+{
+  "requestId": "server-generated-request-id",
+  "generatedAt": "2026-10-28T12:00:00.000Z",
+  "source": "Binance Spot",
+  "timeframe": "1m",
+  "informationalOnly": true,
+  "overview": "A concise, cautious watchlist summary.",
+  "results": [
+    {
+      "symbol": "BTCUSDT",
+      "trend": "bullish",
+      "momentumSummary": "Price and EMA structure indicate positive momentum.",
+      "supportingIndicators": {
+        "lastPrice": 67000,
+        "change24hPercent": 1.25,
+        "volume24h": 12345.6,
+        "ema20": 66500,
+        "ema50": 65000,
+        "rsi14": 58.2,
+        "latestCandleClose": 67000
+      },
+      "risks": ["Momentum can change quickly."],
+      "timeframeSummaries": [
+        { "timeframe": "1m", "summary": "Short-term trend is positive." }
+      ],
+      "explanation": "The latest price is above both computed moving averages.",
+      "dataStatus": "complete",
+      "dataFreshness": {
+        "source": "Binance Spot",
+        "fetchedAt": "2026-10-28T12:00:00.000Z",
+        "tickerAsOf": "2026-10-28T12:00:00.000Z",
+        "candlesAsOf": "2026-10-28T12:00:00.000Z",
+        "stale": false,
+        "candleCount": 500
+      }
+    }
+  ]
+}
+```
+
+`trend` is `bullish`, `neutral`, `bearish`, or `unavailable`; `dataStatus` is `complete` or `partial`. Indicator and ticker fields may be `null` when unavailable. Render the backend values and freshness metadata as supplied; do not treat model prose as authoritative market data.
+
+This endpoint has a Firestore-backed limit of five requests per authenticated user per minute. It returns `400` for invalid input, an empty/missing watchlist, or symbols outside the user's watchlist; `401` for missing/invalid authentication; `429` when the request limit is exceeded; `502` when the upstream analysis fails; and `503` when analysis is not configured or required backend data services are unavailable. Client responses do not include upstream credentials or raw provider errors.
+
+The Firebase function reads the `OPENAI_SECRET` Secret Manager secret and the backend reads `OPENAI_MODEL` as a server-side environment variable. The key must never be exposed to the UI. See [SECRET_MANAGER.md](./SECRET_MANAGER.md).
 
 ### `GET /ip`
 
@@ -94,7 +165,9 @@ const result = await getBinanceStatus();
 const status = result.data;
 ```
 
-This callable allows the hosted dashboard origin `https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app`. It is only for checking status; use the authenticated HTTP endpoints below to read balances or place orders.
+Always pass `'asia-east1'` to `getFunctions`; do not rely on an SDK default or select another region. The callable is deployed in `asia-east1`, and requests to another region may fail their CORS preflight. Do not fetch the callable URL directly; invoke it using `httpsCallable`, which uses Firebase's callable protocol and attaches the current user's Auth token.
+
+This callable allows the hosted dashboard origin `https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app`. It is only for checking status. For watchlist analysis, account reads, and orders, use the authenticated NestJS HTTP endpoints at the `binanceApi` base URL.
 
 ### `GET /api/binance/account`
 

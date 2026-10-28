@@ -4,6 +4,14 @@ import type { Candle } from './market.types';
 
 export class MarketDataError extends Error {}
 
+export interface Binance24HourTicker {
+  lastPrice: number;
+  openPrice: number;
+  priceChangePercent: number;
+  volume: number;
+  closeTime: string;
+}
+
 interface RetryableMarketDataError extends Error {
   retryAfter?: number;
 }
@@ -29,11 +37,46 @@ export class BinanceMarketDataService {
       limit: String(settings.candle_limit),
     });
     const url = `${this.baseUrl}/api/v3/klines?${query.toString()}`;
+    return this.parseCandles(await this.requestWithRetries(url));
+  }
 
+  async fetch24HourTicker(symbol: string): Promise<Binance24HourTicker> {
+    const query = new URLSearchParams({ symbol: symbol.toUpperCase() });
+    const url = `${this.baseUrl}/api/v3/ticker/24hr?${query.toString()}`;
+    const payload = await this.requestWithRetries(url);
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new MarketDataError('Binance returned an invalid 24-hour ticker');
+    }
+
+    const ticker = payload as Record<string, unknown>;
+    const lastPrice = Number(ticker.lastPrice);
+    const openPrice = Number(ticker.openPrice);
+    const volume = Number(ticker.volume);
+    const closeTime = Number(ticker.closeTime);
+    if (
+      !Number.isFinite(lastPrice) || lastPrice <= 0
+      || !Number.isFinite(openPrice) || openPrice <= 0
+      || !Number.isFinite(volume) || volume < 0
+      || !Number.isFinite(closeTime) || closeTime <= 0
+      || Number.isNaN(new Date(closeTime).getTime())
+    ) {
+      throw new MarketDataError('Binance returned invalid 24-hour ticker values');
+    }
+
+    return {
+      lastPrice,
+      openPrice,
+      priceChangePercent: ((lastPrice - openPrice) / openPrice) * 100,
+      volume,
+      closeTime: new Date(closeTime).toISOString(),
+    };
+  }
+
+  private async requestWithRetries(url: string): Promise<unknown> {
+    const settings = this.appConfig.config.binance;
     for (let attempt = 0; attempt <= settings.max_retries; attempt += 1) {
       try {
-        const payload = await this.requestJson(url, settings.timeout_ms);
-        return this.parseCandles(payload);
+        return await this.requestJson(url, settings.timeout_ms);
       } catch (error) {
         if (!(error instanceof Error) || !('retryAfter' in error)) {
           throw error;

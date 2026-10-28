@@ -11,7 +11,7 @@ const googleAuth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cl
 const scheduleExpression = process.env.SCHEDULE_INTERVAL || 'every 5 minutes';
 
 setGlobalOptions({
-  region: 'us-central1',
+  region: 'asia-east1',
   timeoutSeconds: 540,
   memory: '1GiB',
 });
@@ -55,7 +55,6 @@ function scheduleRiskProfile(profileName) {
       schedule: scheduleExpression,
       timeZone: 'UTC',
       retryCount: 1,
-      region: 'us-central1',
     },
     async () => {
       const appConfig = await getAppConfig();
@@ -162,6 +161,7 @@ exports.binanceApi = onRequest(
     memory: '512MiB',
     serviceAccount: 'binance-api-runtime@mytradingapp-50d29.iam.gserviceaccount.com',
     invoker: 'public',
+    secrets: ['OPENAI_SECRET'],
   },
   async (request, response) => {
     try {

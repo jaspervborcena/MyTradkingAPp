@@ -10,9 +10,11 @@ import { MarketDataLoggerService } from './market-data-logger.service';
 import { NetworkDiagnosticsController } from './network-diagnostics.controller';
 import { ScannerService } from './scanner.service';
 import { StrategyService } from './strategy.service';
+import { WatchlistAnalysisController } from './watchlist-analysis.controller';
+import { WatchlistAnalysisService } from './watchlist-analysis.service';
 
 @Module({
-  controllers: [BinanceController, NetworkDiagnosticsController],
+  controllers: [BinanceController, NetworkDiagnosticsController, WatchlistAnalysisController],
   providers: [
     AppConfigService,
     BinanceMarketDataService,
@@ -23,6 +25,7 @@ import { StrategyService } from './strategy.service';
     MarketDataLoggerService,
     ScannerService,
     StrategyService,
+    WatchlistAnalysisService,
   ],
 })
 export class AppModule {}

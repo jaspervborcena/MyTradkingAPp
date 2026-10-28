@@ -3,6 +3,23 @@ import type { Candle, IndicatorSnapshot } from './market.types';
 
 @Injectable()
 export class IndicatorService {
+  computeWatchlist(candles: Candle[]): {
+    latestClose: number | null;
+    latestCandleCloseTime: string | null;
+    ema20: number | null;
+    ema50: number | null;
+    rsi14: number | null;
+  } {
+    const closes = candles.map(candle => candle.close);
+    return {
+      latestClose: closes.at(-1) ?? null,
+      latestCandleCloseTime: candles.at(-1)?.close_time ?? null,
+      ema20: closes.length >= 20 ? this.ema(closes, 20) : null,
+      ema50: closes.length >= 50 ? this.ema(closes, 50) : null,
+      rsi14: closes.length >= 15 ? this.rsi(closes, 14) : null,
+    };
+  }
+
   compute(
     candles: Candle[],
     symbol: string,
@@ -47,6 +64,15 @@ export class IndicatorService {
 
   private average(values: number[]): number {
     return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }
+
+  private ema(values: number[], period: number): number {
+    let ema = this.average(values.slice(0, period));
+    const multiplier = 2 / (period + 1);
+    for (const value of values.slice(period)) {
+      ema = (value - ema) * multiplier + ema;
+    }
+    return ema;
   }
 
   private rsi(closes: number[], period: number): number {

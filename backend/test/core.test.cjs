@@ -13,6 +13,7 @@ const { MarketDataLoggerService } = require('../dist/market-data-logger.service'
 const { NetworkDiagnosticsController } = require('../dist/network-diagnostics.controller');
 const { ScannerService } = require('../dist/scanner.service');
 const { StrategyService } = require('../dist/strategy.service');
+const { WatchlistAnalysisService } = require('../dist/watchlist-analysis.service');
 const { NestFactory } = require('@nestjs/core');
 const { AppModule } = require('../dist/app.module');
 
@@ -120,6 +121,141 @@ test('computes a bullish indicator snapshot from rising candles', () => {
   assert.equal(snapshot.confidence, 1);
 });
 
+test('computes watchlist EMA and RSI indicators from closed candles', () => {
+  const candles = Array.from({ length: 60 }, (_, index) => {
+    const closeTime = Date.now() - 3_600_000 + index * 60_000;
+    return {
+      open_time: new Date(closeTime - 59_999).toISOString(),
+      close_time: new Date(closeTime).toISOString(),
+      open: index + 1,
+      high: index + 2,
+      low: index + 0.5,
+      close: index + 1,
+      volume: 1,
+    };
+  });
+  const result = new IndicatorService().computeWatchlist(candles);
+
+  assert.equal(result.ema20, 50.5);
+  assert.equal(result.ema50, 35.5);
+  assert.equal(result.rsi14, 100);
+  assert.equal(result.latestClose, 60);
+  assert.equal(new IndicatorService().computeWatchlist(candles.slice(0, 49)).ema50, null);
+});
+
+test('validates watchlist analysis input without accepting a client user ID', () => {
+  const service = new WatchlistAnalysisService(
+    new AppConfigService(),
+    {},
+    new IndicatorService(),
+  );
+
+  assert.deepEqual(service.validateRequest({ symbols: ['BTCUSDT'] }), ['BTCUSDT']);
+  assert.equal(service.validateRequest({}), undefined);
+  assert.throws(
+    () => service.validateRequest({ userId: 'other-user', symbols: ['BTCUSDT'] }),
+    error => error.status === 400,
+  );
+  assert.throws(
+    () => service.validateRequest({ symbols: ['BTCUSDT', 'BTCUSDT'] }),
+    error => error.status === 400,
+  );
+  assert.throws(
+    () => service.validateRequest({ symbols: Array(21).fill('BTCUSDT') }),
+    error => error.status === 400,
+  );
+  assert.throws(
+    () => service.selectSymbols(['ETHUSDT'], ['BTCUSDT']),
+    error => error.status === 400,
+  );
+});
+
+test('enforces a transactional per-user watchlist analysis quota', async () => {
+  const { firestore } = require('../dist/firebase-admin');
+  const originalCollection = firestore.collection;
+  const originalRunTransaction = firestore.runTransaction;
+  const records = new Map();
+  firestore.collection = name => {
+    assert.equal(name, 'analysis_request_quotas');
+    return { doc: id => ({ id }) };
+  };
+  firestore.runTransaction = async operation => operation({
+    get: async reference => ({
+      exists: records.has(reference.id),
+      data: () => records.get(reference.id),
+    }),
+    set: (reference, value) => records.set(reference.id, value),
+  });
+
+  try {
+    const service = new WatchlistAnalysisService(
+      new AppConfigService(),
+      {},
+      new IndicatorService(),
+    );
+    for (let request = 0; request < 5; request += 1) {
+      await service.consumeQuota('quota-user', `request-${request}`);
+    }
+    await assert.rejects(
+      service.consumeQuota('quota-user', 'request-six'),
+      error => error.status === 429,
+    );
+  } finally {
+    firestore.collection = originalCollection;
+    firestore.runTransaction = originalRunTransaction;
+  }
+});
+
+test('uses OpenAI Responses API strict Structured Outputs', async () => {
+  const originalFetch = global.fetch;
+  const originalApiKey = process.env.OPENAI_SECRET;
+  const originalModel = process.env.OPENAI_MODEL;
+  process.env.OPENAI_SECRET = 'test-secret';
+  process.env.OPENAI_MODEL = 'test-model';
+  global.fetch = async (_url, options) => {
+    const request = JSON.parse(options.body);
+    assert.equal(request.model, 'test-model');
+    assert.equal(request.text.format.type, 'json_schema');
+    assert.equal(request.text.format.strict, true);
+    return new Response(JSON.stringify({
+      id: 'resp_test',
+      object: 'response',
+      created_at: 1,
+      status: 'completed',
+      model: 'test-model',
+      output: [{
+        id: 'msg_test',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [{
+          type: 'output_text',
+          text: JSON.stringify({ overview: 'Informational.', results: [] }),
+          annotations: [],
+        }],
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    const service = new WatchlistAnalysisService(
+      new AppConfigService(),
+      {},
+      new IndicatorService(),
+    );
+    assert.deepEqual(
+      await service.requestAnalysis([], 'test-request-id'),
+      { overview: 'Informational.', results: [] },
+    );
+  } finally {
+    global.fetch = originalFetch;
+    if (originalApiKey === undefined) delete process.env.OPENAI_SECRET;
+    else process.env.OPENAI_SECRET = originalApiKey;
+    if (originalModel === undefined) delete process.env.OPENAI_MODEL;
+    else process.env.OPENAI_MODEL = originalModel;
+  }
+});
+
 test('strategy acceptance respects confidence threshold', () => {
   const strategy = new StrategyService();
   const snapshot = {
@@ -205,6 +341,34 @@ test('Binance client parses valid public klines', async () => {
     assert.equal(candles.length, 1);
     assert.equal(candles[0].close, 105);
     assert.equal(candles[0].open_time, new Date(openTime).toISOString());
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('Binance client parses fresh 24-hour Spot ticker values', async () => {
+  const originalFetch = global.fetch;
+  const closeTime = Date.now();
+  global.fetch = async url => {
+    assert.match(url, /\/api\/v3\/ticker\/24hr\?symbol=BTCUSDT$/);
+    return new Response(JSON.stringify({
+      lastPrice: '105.25',
+      openPrice: '100',
+      volume: '1234.5',
+      closeTime,
+    }), { status: 200 });
+  };
+
+  try {
+    const ticker = await new BinanceMarketDataService(new AppConfigService())
+      .fetch24HourTicker('btcusdt');
+    assert.deepEqual(ticker, {
+      lastPrice: 105.25,
+      openPrice: 100,
+      priceChangePercent: 5.25,
+      volume: 1234.5,
+      closeTime: new Date(closeTime).toISOString(),
+    });
   } finally {
     global.fetch = originalFetch;
   }

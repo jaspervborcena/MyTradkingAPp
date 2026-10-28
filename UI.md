@@ -6,6 +6,78 @@ Build a dashboard for the scanner's **High**, **Medium**, and **Slow** risk prof
 
 The README describes the Angular dashboard as a separate project. Keep this file as the integration checklist for that frontend unless the project location or framework changes.
 
+## Backend API Integration Handoff
+
+The production NestJS API is the Firebase HTTPS function `binanceApi` in `asia-east1`:
+
+```text
+https://asia-east1-mytradingapp-50d29.cloudfunctions.net/binanceApi
+```
+
+Configure this base URL through the Angular environment/configuration layer. Use the same Firebase project/Auth instance as the dashboard, and obtain a fresh Firebase ID token with `currentUser.getIdToken()` before each NestJS HTTP request. Send it as `Authorization: Bearer <token>`. Never send a UID, API key, Firebase token in the request body, or any client-calculated prices/indicators as authority.
+
+### Binance status callable: region is required
+
+The `getBinanceStatus` Firebase callable is deployed in **`asia-east1`**. Initialize the Firebase Functions client with that explicit region:
+
+```typescript
+import { getFunctions, httpsCallable } from 'firebase/functions';
+
+const functions = getFunctions(firebaseApp, 'asia-east1');
+const getBinanceStatus = httpsCallable<void, { connected: boolean }>(
+  functions,
+  'getBinanceStatus',
+);
+const { data } = await getBinanceStatus();
+```
+
+Always pass `'asia-east1'`; do not rely on an SDK default. A request to any other region is not the deployed callable and may fail CORS. Do not call the callable URL using `fetch`; use `httpsCallable`, which handles the callable protocol and Firebase Auth token. If the browser network panel shows another region, the UI is using the wrong Functions instance; check its Firebase initialization and redeploy the UI.
+
+### Watchlist analysis: authenticated HTTP endpoint
+
+Call the NestJS endpoint—not a Firebase callable—when the user requests analysis:
+
+```text
+POST https://asia-east1-mytradingapp-50d29.cloudfunctions.net/binanceApi/api/analysis/watchlist
+Authorization: Bearer <Firebase ID token>
+Content-Type: application/json
+```
+
+Send `{}` to analyze the whole signed-in user's `users/{uid}.watchlist`, or send a selection:
+
+```json
+{ "symbols": ["BTCUSDT", "ETHUSDT"] }
+```
+
+`symbols` must be uppercase USDT Spot symbols in that user's saved watchlist; requests are limited to 20 symbols and five per user per minute. Never include a `userId`. A suggested Angular service method:
+
+```typescript
+async analyzeWatchlist(symbols?: string[]): Promise<WatchlistAnalysis> {
+  const user = this.auth.currentUser;
+  if (!user) throw new Error('Sign in before requesting watchlist analysis.');
+
+  const token = await user.getIdToken();
+  const response = await fetch(
+    `${this.apiBaseUrl}/api/analysis/watchlist`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(symbols ? { symbols } : {}),
+    },
+  );
+  return this.readResponse<WatchlistAnalysis>(response);
+}
+```
+
+The response contains `overview`, one `results` entry per symbol, backend-computed `supportingIndicators`, `risks`, `timeframeSummaries`, `explanation`, `dataStatus`, and Binance `dataFreshness` timestamps. Render `unavailable`/partial results and stale-data warnings rather than replacing missing values. The analysis is informational, not financial advice or a guaranteed outcome. Handle `400` (invalid/not-in-watchlist selection), `401` (sign-in again), `429` (rate limit), `502` (analysis provider failure), and `503` (server configuration/upstream dependency unavailable) as distinct API errors. The model's prose is not a source for price/indicator values.
+
+The HTTPS function and NestJS CORS allowlist include the hosted dashboard origin `https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app`. A CORS error on the callable is separate from the NestJS HTTP API; verify the request's region and use the correct client (`httpsCallable` for status, `fetch`/HTTP for analysis).
+
+See [docs/API.md](docs/API.md) for the full endpoint contract, response example, authentication behavior, and error details.
+
 ## Current Firestore State
 
 - `app_config` is the global scanner pause/mode configuration. Its current function reads the first document in the collection; `enabled`, `mode`, and `interval_minutes` are configuration fields, and `last_run_at` is a Firestore Timestamp.
