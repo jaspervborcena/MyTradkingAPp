@@ -10,16 +10,47 @@ const { BinanceService } = require('../dist/binance.service');
 const { FirebaseAuthGuard } = require('../dist/firebase-auth.guard');
 const { IndicatorService } = require('../dist/indicator.service');
 const { MarketDataLoggerService } = require('../dist/market-data-logger.service');
+const { NetworkDiagnosticsController } = require('../dist/network-diagnostics.controller');
 const { ScannerService } = require('../dist/scanner.service');
 const { StrategyService } = require('../dist/strategy.service');
 const { NestFactory } = require('@nestjs/core');
 const { AppModule } = require('../dist/app.module');
+
+function mockOrderRequestStore() {
+  const { firestore } = require('../dist/firebase-admin');
+  const originalCollection = firestore.collection;
+  const originalRunTransaction = firestore.runTransaction;
+  const records = new Map();
+
+  firestore.collection = () => ({
+    doc: id => ({
+      id,
+      update: async updates => records.set(id, { ...records.get(id), ...updates }),
+    }),
+  });
+  firestore.runTransaction = async operation => operation({
+    get: async reference => ({
+      exists: records.has(reference.id),
+      data: () => records.get(reference.id),
+    }),
+    create: (reference, value) => records.set(reference.id, value),
+  });
+
+  return {
+    records,
+    restore: () => {
+      firestore.collection = originalCollection;
+      firestore.runTransaction = originalRunTransaction;
+    },
+  };
+}
 
 test('loads checked-in scanner configuration', () => {
   const config = new AppConfigService().config;
   assert.deepEqual(config.symbols, ['BTCUSDT', 'ETHUSDT']);
   assert.equal(config.binance.timeframe, '1m');
   assert.equal(config.binance.timeout_ms, 10_000);
+  assert.equal(config.trading.liveSpotOrdersEnabled, true);
   assert.equal(config.firebase.enabled, true);
 });
 
@@ -38,6 +69,35 @@ test('Firebase Auth users can access protected API routes without a wallet docum
     assert.equal(request.firebaseUser, decodedToken);
   } finally {
     firebaseAuth.verifyIdToken = originalVerify;
+  }
+});
+
+test('returns a valid public egress IP from the backend runtime', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async url => {
+    assert.equal(url, 'https://api.ipify.org?format=json');
+    return new Response(JSON.stringify({ ip: '203.0.113.42' }), { status: 200 });
+  };
+
+  try {
+    const result = await new NetworkDiagnosticsController().getEgressIp();
+    assert.deepEqual(result, { ip: '203.0.113.42' });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('rejects invalid public egress IP responses', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({ ip: 'not-an-ip' }), { status: 200 });
+
+  try {
+    await assert.rejects(
+      new NetworkDiagnosticsController().getEgressIp(),
+      error => error.status === 502 && /invalid IP address/.test(error.message),
+    );
+  } finally {
+    global.fetch = originalFetch;
   }
 });
 
@@ -190,9 +250,10 @@ test('Binance account endpoint signs a read-only account request with fetched cr
   };
 
   try {
-    const service = new BinanceService({
-      getCredentials: async () => ({ apiKey, apiSecret }),
-    });
+    const service = new BinanceService(
+      { getCredentials: async () => ({ apiKey, apiSecret }) },
+      new AppConfigService(),
+    );
     const account = await service.getAccount();
 
     assert.equal(new URL(requestUrl).pathname, '/api/v3/account');
@@ -209,6 +270,203 @@ test('Binance account endpoint signs a read-only account request with fetched cr
       connected: true,
       balances: [{ asset: 'BTC', free: 0.5, locked: 0 }],
     });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('places a confirmed market buy using available USDT and replays its idempotent result', async () => {
+  const originalFetch = global.fetch;
+  const store = mockOrderRequestStore();
+  const apiKey = 'test-api-key';
+  const apiSecret = 'test-api-secret';
+  const requests = [];
+  global.fetch = async (url, options) => {
+    requests.push({ url, options });
+    if (new URL(url).pathname === '/api/v3/account') {
+      return new Response(JSON.stringify({ balances: [
+        { asset: 'USDT', free: '100.00', locked: '0' },
+        { asset: 'BTC', free: '0.5', locked: '0' },
+      ] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      symbol: 'BTCUSDT',
+      orderId: 123,
+      clientOrderId: '550e8400-e29b-41d4-a716-446655440000',
+      side: 'BUY',
+      type: 'MARKET',
+      status: 'FILLED',
+      executedQty: '0.0005',
+      cummulativeQuoteQty: '25.00',
+      transactTime: 123456789,
+    }), { status: 200 });
+  };
+
+  try {
+    const service = new BinanceService(
+      { getCredentials: async () => ({ apiKey, apiSecret }) },
+      new AppConfigService(),
+    );
+    const order = await service.placeMarketOrder('firebase-user-1', {
+      symbol: 'BTCUSDT',
+      side: 'BUY',
+      quoteOrderQty: '25.00',
+      clientOrderId: '550e8400-e29b-41d4-a716-446655440000',
+      confirm: true,
+    });
+
+    assert.equal(requests.length, 2);
+    assert.equal(new URL(requests[1].url).pathname, '/api/v3/order');
+    assert.equal(requests[1].options.method, 'POST');
+    assert.equal(requests[1].options.headers['X-MBX-APIKEY'], apiKey);
+    const parameters = new URLSearchParams(requests[1].options.body);
+    const signature = parameters.get('signature');
+    parameters.delete('signature');
+    assert.equal(
+      signature,
+      require('node:crypto').createHmac('sha256', apiSecret)
+        .update(parameters.toString())
+        .digest('hex'),
+    );
+    assert.equal(parameters.get('side'), 'BUY');
+    assert.equal(parameters.get('quoteOrderQty'), '25.00');
+    assert.equal(parameters.has('quantity'), false);
+    assert.deepEqual(order, {
+      symbol: 'BTCUSDT',
+      orderId: 123,
+      clientOrderId: '550e8400-e29b-41d4-a716-446655440000',
+      side: 'BUY',
+      type: 'MARKET',
+      status: 'FILLED',
+      executedQty: '0.0005',
+      cummulativeQuoteQty: '25.00',
+      transactTime: 123456789,
+      replayed: false,
+    });
+    assert.equal(
+      store.records.get('550e8400-e29b-41d4-a716-446655440000').status,
+      'completed',
+    );
+
+    const replay = await service.placeMarketOrder('firebase-user-1', {
+      symbol: 'BTCUSDT',
+      side: 'BUY',
+      quoteOrderQty: '25.00',
+      clientOrderId: '550e8400-e29b-41d4-a716-446655440000',
+      confirm: true,
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.orderId, 123);
+  } finally {
+    global.fetch = originalFetch;
+    store.restore();
+  }
+});
+
+test('rejects market orders that exceed available balance without submitting them', async () => {
+  const originalFetch = global.fetch;
+  const store = mockOrderRequestStore();
+  const requests = [];
+  global.fetch = async url => {
+    requests.push(url);
+    return new Response(JSON.stringify({ balances: [
+      { asset: 'USDT', free: '10.00', locked: '50.00' },
+    ] }), { status: 200 });
+  };
+
+  try {
+    const service = new BinanceService(
+      { getCredentials: async () => ({ apiKey: 'key', apiSecret: 'secret' }) },
+      new AppConfigService(),
+    );
+    await assert.rejects(
+      service.placeMarketOrder('firebase-user-1', {
+        symbol: 'BTCUSDT',
+        side: 'BUY',
+        quoteOrderQty: '10.01',
+        clientOrderId: '550e8400-e29b-41d4-a716-446655440001',
+        confirm: true,
+      }),
+      error => error.status === 400 && /available USDT balance/.test(error.message),
+    );
+
+    assert.equal(requests.length, 1);
+    assert.equal(
+      store.records.get('550e8400-e29b-41d4-a716-446655440001').status,
+      'rejected',
+    );
+  } finally {
+    global.fetch = originalFetch;
+    store.restore();
+  }
+});
+
+test('places a confirmed market sell using available base-asset quantity', async () => {
+  const originalFetch = global.fetch;
+  const store = mockOrderRequestStore();
+  const requests = [];
+  global.fetch = async (url, options) => {
+    requests.push({ url, options });
+    if (new URL(url).pathname === '/api/v3/account') {
+      return new Response(JSON.stringify({ balances: [
+        { asset: 'BTC', free: '0.01000000', locked: '0.00500000' },
+      ] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      symbol: 'BTCUSDT',
+      orderId: 456,
+      clientOrderId: '550e8400-e29b-41d4-a716-446655440002',
+      side: 'SELL',
+      type: 'MARKET',
+      status: 'FILLED',
+      executedQty: '0.001',
+      cummulativeQuoteQty: '75.00',
+    }), { status: 200 });
+  };
+
+  try {
+    const service = new BinanceService(
+      { getCredentials: async () => ({ apiKey: 'key', apiSecret: 'secret' }) },
+      new AppConfigService(),
+    );
+    const order = await service.placeMarketOrder('firebase-user-1', {
+      symbol: 'BTCUSDT',
+      side: 'SELL',
+      quantity: '0.001',
+      clientOrderId: '550e8400-e29b-41d4-a716-446655440002',
+      confirm: true,
+    });
+
+    const parameters = new URLSearchParams(requests[1].options.body);
+    assert.equal(parameters.get('quantity'), '0.001');
+    assert.equal(parameters.has('quoteOrderQty'), false);
+    assert.equal(order.side, 'SELL');
+    assert.equal(order.status, 'FILLED');
+  } finally {
+    global.fetch = originalFetch;
+    store.restore();
+  }
+});
+
+test('rejects market orders when live trading is disabled', async () => {
+  const originalFetch = global.fetch;
+  let fetchCount = 0;
+  global.fetch = async () => {
+    fetchCount += 1;
+    throw new Error('fetch should not be called');
+  };
+
+  try {
+    const service = new BinanceService(
+      { getCredentials: async () => ({ apiKey: 'key', apiSecret: 'secret' }) },
+      { config: { trading: { liveSpotOrdersEnabled: false } } },
+    );
+    await assert.rejects(
+      service.placeMarketOrder('firebase-user-1', {}),
+      error => error.status === 503 && /disabled/.test(error.message),
+    );
+    assert.equal(fetchCount, 0);
   } finally {
     global.fetch = originalFetch;
   }
@@ -264,7 +522,7 @@ test('boots the Nest application context for a one-shot scan', async () => {
   const previousConfigDir = process.env.CONFIG_DIR;
   const previousScanOnce = process.env.SCAN_ONCE;
   try {
-    for (const filename of ['environment.json', 'binance.json', 'strategies.json']) {
+    for (const filename of ['environment.json', 'binance.json', 'trading.json', 'strategies.json']) {
       copyFileSync(join(sourceConfigDir, filename), join(configDir, filename));
     }
     writeFileSync(join(configDir, 'assets.json'), JSON.stringify({ symbols: [] }));

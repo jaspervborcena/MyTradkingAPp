@@ -20,6 +20,7 @@ export interface AppConfig {
   appEnvironment: string;
   logLevel: string;
   scanIntervalSeconds: number;
+  trading: { liveSpotOrdersEnabled: boolean };
   binance: BinanceConfig;
   firebase: { enabled: boolean; project_id: string | null };
   strategies: StrategyConfig[];
@@ -38,6 +39,7 @@ export class AppConfigService {
     const configDir = process.env.CONFIG_DIR ?? resolve(this.rootDir, 'config');
     const environment = this.readObject(configDir, 'environment.json');
     const binance = this.readObject(configDir, 'binance.json');
+    const trading = this.readObject(configDir, 'trading.json');
     const firebase = this.readObject(configDir, 'firebase.json');
     const strategiesDocument = this.readObject(configDir, 'strategies.json');
     const assetsDocument = this.readObject(configDir, 'assets.json');
@@ -55,6 +57,7 @@ export class AppConfigService {
       'timeout_ms',
       'max_retries',
     ]);
+    this.assertKeys(trading, 'trading.json', ['live_spot_orders_enabled']);
     this.assertKeys(firebase, 'firebase.json', ['enabled', 'project_id']);
     this.assertKeys(strategiesDocument, 'strategies.json', ['strategies']);
     this.assertKeys(assetsDocument, 'assets.json', ['symbols']);
@@ -80,6 +83,9 @@ export class AppConfigService {
     }
     if (binance.market_type !== 'spot') {
       throw new Error('binance.json market_type must be spot');
+    }
+    if (typeof trading.live_spot_orders_enabled !== 'boolean') {
+      throw new Error('trading.json live_spot_orders_enabled must be a boolean');
     }
     const timeframes = new Set([
       '1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M',
@@ -157,6 +163,9 @@ export class AppConfigService {
       appEnvironment,
       logLevel: environment.log_level.toUpperCase(),
       scanIntervalSeconds,
+      trading: {
+        liveSpotOrdersEnabled: trading.live_spot_orders_enabled,
+      },
       binance: {
         environment: binanceEnvironment,
         timeframe,

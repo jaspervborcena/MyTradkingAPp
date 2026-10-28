@@ -1,6 +1,6 @@
 # Binance credentials and Firebase access
 
-The NestJS endpoint `GET /api/binance/account` reads the shared Binance credentials from Google Secret Manager and calls Binance's signed account-information endpoint. It does not submit orders or use trading endpoints.
+The NestJS Binance API reads the shared credentials from Google Secret Manager for account reads and optional manual Spot market orders.
 
 ## Secret names and project
 
@@ -32,7 +32,9 @@ For local development, use Application Default Credentials from an account that 
 
 Requests to `/api/binance/*` must include a Firebase ID token in `Authorization: Bearer <id-token>`. The backend verifies the token, including revocation, against the Firebase project configured for the service. An authenticated Firebase user does not need a separate `users/{uid}/wallet/main` Firestore document.
 
-Every authenticated user in that Firebase project can read balances from the same shared Binance account. Keep Firebase Auth user enrollment controlled accordingly. The Binance API key itself should have read-only permissions; do not enable withdrawals or trading permissions for this integration.
+Every authenticated user in that Firebase project can read balances and submit manual market orders against the same shared Binance account. The API does not restrict orders to a user's Firebase UID. A UI confirmation prompt is not a backend authorization boundary; a signed-in user can call the endpoint directly. Keep Firebase Auth enrollment controlled accordingly.
+
+For account reads only, the Binance key needs account-read permission. To place orders, it must also have Binance Spot Trading permission and `config/trading.json` must set `live_spot_orders_enabled` to `true`. Never enable withdrawals. The UI must require manual review before submission, but authenticated users can call the API directly; the `confirm` request field is not an authorization boundary.
 
 Example request (supply a short-lived Firebase ID token locally; never commit it):
 

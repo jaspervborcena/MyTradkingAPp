@@ -7,11 +7,12 @@ import { BinanceService } from './binance.service';
 import { FirebaseAuthGuard } from './firebase-auth.guard';
 import { IndicatorService } from './indicator.service';
 import { MarketDataLoggerService } from './market-data-logger.service';
+import { NetworkDiagnosticsController } from './network-diagnostics.controller';
 import { ScannerService } from './scanner.service';
 import { StrategyService } from './strategy.service';
 
 @Module({
-  controllers: [BinanceController],
+  controllers: [BinanceController, NetworkDiagnosticsController],
   providers: [
     AppConfigService,
     BinanceMarketDataService,

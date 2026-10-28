@@ -38,7 +38,7 @@ async function createServerlessApplication(): Promise<Express> {
         typeof candidate === 'string' ? candidate === origin : candidate.test(origin));
       callback(null, allowed);
     },
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type'],
   });
   await app.init();

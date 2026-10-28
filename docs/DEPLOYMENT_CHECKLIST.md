@@ -1,6 +1,6 @@
 # Production Deployment Checklist
 
-This checklist is for the signal-only crypto scanner in this repository. It is intended for a background worker run in Cloud Run or a similar container host. It does not authorize live trading.
+This checklist covers the background scanner runtime only. The scanner remains signal-only; it does not configure or deploy the separate Firebase Binance order API. See [docs/API.md](./API.md) for the manual live-order endpoint and its safeguards.
 
 ## 1. Pre-flight checks
 
@@ -21,7 +21,7 @@ This checklist is for the signal-only crypto scanner in this repository. It is i
 - [ ] Docker Compose is available for local smoke tests.
 - [ ] `.dockerignore` excludes local caches and secrets.
 - [ ] `config/*.json` contains only non-secret runtime settings.
-- [ ] `backend/src/main.ts` starts the app without live order execution.
+- [ ] Confirm the scanner worker does not submit orders; live order configuration applies to the separate authenticated API.
 
 ## 3. Secret handling
 
@@ -30,7 +30,8 @@ This checklist is for the signal-only crypto scanner in this repository. It is i
 - [ ] Ensure Firebase credentials are injected at runtime and never baked into the image.
 - [ ] Keep the Firestore project ID and service identity separate from source-controlled config.
 - [ ] Grant the API runtime identity Secret Accessor access only to the Binance secrets it needs; see [docs/SECRET_MANAGER.md](./SECRET_MANAGER.md).
-- [ ] Confirm the Binance API key has read-only permissions and Firebase Auth enrollment is restricted to intended balance viewers.
+- [ ] Confirm Binance API permissions match the deployed API scope. If manual order placement is enabled, Spot Trading permission is required and withdrawals must remain disabled.
+- [ ] Confirm Firebase Auth enrollment is controlled: every authenticated user can place manual orders against the shared account when the order endpoint is enabled.
 
 ## 4. Local container validation
 
@@ -71,8 +72,7 @@ This checklist is for the signal-only crypto scanner in this repository. It is i
 
 ## 6. Cloud Run safety checks
 
-- [ ] Confirm the service remains in signal-only mode.
-- [ ] Confirm the app is not performing live order placement.
+- [ ] Confirm this background worker remains signal-only and does not submit Binance orders.
 - [ ] Confirm the startup interval is conservative and request pacing is safe.
 - [ ] Confirm logs are structured and do not expose secrets.
 - [ ] Confirm restart behavior is acceptable for a non-interactive worker.
@@ -93,4 +93,4 @@ This checklist is for the signal-only crypto scanner in this repository. It is i
 
 ## 9. Final sign-off
 
-Only sign off for production deployment when all boxes above are checked and the service is documented as signal-only. This project is not a live-trading system and should not be marketed as one without explicit approval and separate operational controls.
+Only sign off for production deployment when all boxes above are checked and the scanner worker's signal-only behavior is documented. Live order capability belongs to the separate Binance API and requires the controls described in [docs/API.md](./API.md).

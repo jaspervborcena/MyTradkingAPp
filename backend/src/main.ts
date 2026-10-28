@@ -36,7 +36,7 @@ async function bootstrap(): Promise<void> {
         typeof candidate === 'string' ? candidate === origin : candidate.test(origin));
       callback(null, allowed);
     },
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type'],
   });
 

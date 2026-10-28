@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a read-only, signal-only dashboard for the scanner's **High**, **Medium**, and **Slow** risk profiles. The landing page is the **Overview**. Do not add order placement or trade execution controls; those are not implemented by the backend.
+Build a dashboard for the scanner's **High**, **Medium**, and **Slow** risk profiles. The landing page is the **Overview**. The backend now supports manually confirmed Binance Spot market orders; any authenticated Firebase user can trade from the shared account, so the UI must clearly communicate that shared access and require review before submission. Automated trading, limit orders, withdrawals, and order history are not implemented.
 
 The README describes the Angular dashboard as a separate project. Keep this file as the integration checklist for that frontend unless the project location or framework changes.
 
@@ -170,15 +170,16 @@ The controls that affect signal calculation now are the selected symbols, SMA fa
 
 ### 4. Trades
 
-- [ ] Keep this page marked **Not available** until the backend writes trade or paper-trade lifecycle records.
+- [ ] Show the immediate response for a manually submitted Binance market order.
 - [ ] Do not show mock trades as live data.
-- [ ] When execution is explicitly approved and implemented, define the trade schema and access controls before connecting this page to `trades`.
+- [ ] Do not present idempotency records as an order-history API; a history endpoint is not implemented.
 
 ### 5. Users and Access
 
 - [ ] Add Firebase Authentication before exposing dashboard data beyond a trusted development environment.
 - [ ] Decide whether roles are stored as Firebase custom claims or in a protected `users` collection; the proposed `users` schema is not live functionality.
-- [ ] Define viewer and admin capabilities. Start with authenticated read-only access.
+- [ ] Clearly communicate that every authenticated Firebase user can submit orders on the shared Binance account.
+- [ ] Do not treat the UI confirmation as an access-control boundary; the backend accepts any authenticated Firebase user.
 - [ ] Deny public reads and writes with Firestore Security Rules; never put service-account credentials in the browser.
 - [ ] Defer user/role administration UI until the identity model and rules are tested.
 
@@ -239,4 +240,4 @@ The controls that affect signal calculation now are the selected symbols, SMA fa
 - [ ] Shows live observation and signal summaries sourced from Firestore, not hard-coded samples.
 - [ ] Clicking a summary takes the user to the relevant filtered page.
 - [ ] A missing collection or permission error is explained without crashing the dashboard.
-- [ ] Contains no order placement, trade execution, or misleading profitability controls.
+- [ ] Requires explicit review of market-order side, symbol, and amount before submit; no automated trading or profitability claims.

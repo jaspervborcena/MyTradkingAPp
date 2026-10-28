@@ -137,7 +137,7 @@ exports.trading_scanMarket_slow = scheduleRiskProfile('slow');
 
 exports.binanceApi = onRequest(
   {
-    region: 'us-central1',
+    region: 'asia-east1',
     timeoutSeconds: 60,
     memory: '512MiB',
     serviceAccount: 'binance-api-runtime@mytradingapp-50d29.iam.gserviceaccount.com',

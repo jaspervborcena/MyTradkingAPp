@@ -1,4 +1,4 @@
-import { Controller, Get, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import type { DecodedIdToken } from 'firebase-admin/auth';
 import { BinanceService } from './binance.service';
@@ -21,5 +21,10 @@ export class BinanceController {
   @Get('account')
   getAccount() {
     return this.binance.getAccount();
+  }
+
+  @Post('order')
+  placeMarketOrder(@Req() request: FirebaseRequest, @Body() body: unknown) {
+    return this.binance.placeMarketOrder(request.firebaseUser.uid, body);
   }
 }

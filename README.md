@@ -50,11 +50,11 @@ npm run start:dev
 
 For profile-driven scans, set `PROFILE` to `high`, `medium`, or `slow`; the process identity must have Firestore read access for `risk_profiles/{PROFILE}`. Firestore writes require the configured service identity and appropriate permissions. Do not add service-account keys to the repository.
 
-The authenticated `GET /api/binance/account` endpoint reads its Binance credentials from Google Secret Manager. Configure the runtime identity and Firebase Auth access as described in [docs/SECRET_MANAGER.md](docs/SECRET_MANAGER.md). The API key must be read-only; the endpoint does not place orders.
+The authenticated Binance API reads shared credentials from Google Secret Manager. It supports account reads and, when enabled in `config/trading.json`, manually confirmed Spot market orders. Any authenticated Firebase user in the project can access the shared account and submit orders. Keep withdrawal permission disabled; see [docs/SECRET_MANAGER.md](docs/SECRET_MANAGER.md) and [docs/API.md](docs/API.md).
 
 See [docs/API.md](docs/API.md) for the HTTP endpoint contract, Firebase ID-token usage, response/error examples, and Angular UI integration.
 
-The API is deployed as the Firebase HTTPS function `binanceApi` in `mytradingapp-50d29`: `https://binanceapi-3evfzkw3na-uc.a.run.app`.
+The API is deployed as the Firebase HTTPS function `binanceApi` in `asia-east1` in `mytradingapp-50d29`: `https://asia-east1-mytradingapp-50d29.cloudfunctions.net/binanceApi`.
 
 ## Docker
 
@@ -84,10 +84,10 @@ The Firebase function also checks `app_config.enabled` and the profile's `enable
 
 ## Safety and configuration
 
-- The scanner is read-only and uses public Binance market-data endpoints. No trading keys or order APIs are used.
+- The scanner itself remains read-only and uses public Binance market-data endpoints. The separate authenticated Binance API supports manual Spot market orders when enabled in `config/trading.json`.
 - Keep secrets outside source control and use workload identity or Secret Manager for Firebase credentials.
 - Keep signal generation separate from any future order-execution milestone.
-- Binance environment, interval, and candle count are configured in `config/binance.json`; symbols and strategy settings are in `config/assets.json` and `config/strategies.json`.
+- Binance environment, interval, and candle count are configured in `config/binance.json`; live market-order availability is controlled by `config/trading.json`; symbols and strategy settings are in `config/assets.json` and `config/strategies.json`.
 - Firestore is enabled by the checked-in config. Use an authenticated runtime identity where remote persistence is expected.
 
-This is a signal-only market scanner, not a live-trading system or financial advice.
+Scanner signals are not executed automatically. The Binance API's manual order endpoint can place live Spot market orders; market prices can change and this project does not provide financial advice.
