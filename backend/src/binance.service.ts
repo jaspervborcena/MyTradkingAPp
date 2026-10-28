@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
-import { BadGatewayException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { BadGatewayException, Injectable } from '@nestjs/common';
+import { BinanceSecretsService } from './binance-secrets.service';
 import { firestore } from './firebase-admin';
 
 export interface BinanceBalance {
@@ -12,23 +13,21 @@ export interface BinanceBalance {
 export class BinanceService {
   private readonly api = 'https://api.binance.com';
 
+  constructor(private readonly secrets: BinanceSecretsService) {}
+
   async getUserStatus(uid: string): Promise<{ connected: boolean }> {
     const integration = await firestore.doc(`users/${uid}/integrations/binance`).get();
     return { connected: integration.exists && integration.data()?.['enabled'] === true };
   }
 
   async getAccount(): Promise<{ connected: true; balances: BinanceBalance[] }> {
-    const apiKey = process.env.BINANCE_API_KEY;
-    const apiSecret = process.env.BINANCE_SECRET;
-    if (!apiKey || !apiSecret) {
-      throw new ServiceUnavailableException('Binance API secrets are not configured on the server.');
-    }
+    const credentials = await this.secrets.getCredentials();
 
     const parameters = new URLSearchParams({
       recvWindow: '5000',
       timestamp: String(Date.now()),
     });
-    const signature = createHmac('sha256', apiSecret)
+    const signature = createHmac('sha256', credentials.apiSecret)
       .update(parameters.toString())
       .digest('hex');
 
@@ -37,7 +36,7 @@ export class BinanceService {
       response = await fetch(
         `${this.api}/api/v3/account?${parameters.toString()}&signature=${signature}`,
         {
-          headers: { 'X-MBX-APIKEY': apiKey },
+          headers: { 'X-MBX-APIKEY': credentials.apiKey },
           signal: AbortSignal.timeout(10_000),
         },
       );

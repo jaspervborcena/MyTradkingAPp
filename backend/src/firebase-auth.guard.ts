@@ -1,13 +1,12 @@
 import {
   CanActivate,
   ExecutionContext,
-  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import type { DecodedIdToken } from 'firebase-admin/auth';
-import { firebaseAuth, firestore } from './firebase-admin';
+import { firebaseAuth } from './firebase-admin';
 
 interface AuthenticatedRequest extends Request {
   firebaseUser?: DecodedIdToken;
@@ -31,11 +30,6 @@ export class FirebaseAuthGuard implements CanActivate {
       user = await firebaseAuth.verifyIdToken(token, true);
     } catch {
       throw new UnauthorizedException('The Firebase ID token is invalid or expired.');
-    }
-
-    const wallet = await firestore.doc(`users/${user.uid}/wallet/main`).get();
-    if (!wallet.exists) {
-      throw new ForbiddenException('A Firestore user record is required to access Binance data.');
     }
 
     request.firebaseUser = user;

@@ -1,0 +1,16 @@
+{
+  "name": "mytradingapp",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": "20.x"
+  },
+  "workspaces": [
+    "backend"
+  ],
+  "scripts": {
+    "build": "npm --workspace trading-dashboard-api run build",
+    "start": "node backend/dist/main.js",
+    "test": "npm --workspace trading-dashboard-api test"
+  }
+}

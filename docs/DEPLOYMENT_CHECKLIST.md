@@ -29,6 +29,8 @@ This checklist is for the signal-only crypto scanner in this repository. It is i
 - [ ] Do not commit `.env`, service-account JSON, or Binance/private keys.
 - [ ] Ensure Firebase credentials are injected at runtime and never baked into the image.
 - [ ] Keep the Firestore project ID and service identity separate from source-controlled config.
+- [ ] Grant the API runtime identity Secret Accessor access only to the Binance secrets it needs; see [docs/SECRET_MANAGER.md](./SECRET_MANAGER.md).
+- [ ] Confirm the Binance API key has read-only permissions and Firebase Auth enrollment is restricted to intended balance viewers.
 
 ## 4. Local container validation
 

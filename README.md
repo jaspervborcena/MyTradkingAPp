@@ -39,6 +39,8 @@ npm run start:dev
 
 The API listens on port 3000 by default; set `PORT` to override it. The scanner starts immediately and then follows `config/environment.json`. Local JSONL output is appended to `data/market_observations.jsonl` and `data/market_signals.jsonl`.
 
+The repository root is also an npm workspace so Cloud Run source builds can detect the Node.js app. To build/start from the repository root, use `npm ci`, `npm run build`, and `npm start`.
+
 Run one scan and exit:
 
 ```powershell
@@ -47,6 +49,8 @@ npm run start:dev
 ```
 
 For profile-driven scans, set `PROFILE` to `high`, `medium`, or `slow`; the process identity must have Firestore read access for `risk_profiles/{PROFILE}`. Firestore writes require the configured service identity and appropriate permissions. Do not add service-account keys to the repository.
+
+The authenticated `GET /api/binance/account` endpoint reads its Binance credentials from Google Secret Manager. Configure the runtime identity and Firebase Auth access as described in [docs/SECRET_MANAGER.md](docs/SECRET_MANAGER.md). The API key must be read-only; the endpoint does not place orders.
 
 ## Docker
 

@@ -10,6 +10,7 @@
     "test": "npm run build && node --test test/*.test.cjs"
   },
   "dependencies": {
+    "@google-cloud/secret-manager": "^7.2.0",
     "@nestjs/common": "^12.3.2",
     "@nestjs/core": "^12.3.2",
     "@nestjs/platform-express": "^12.3.2",

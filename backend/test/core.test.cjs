@@ -5,6 +5,9 @@ const { join } = require('node:path');
 const test = require('node:test');
 const { AppConfigService } = require('../dist/app-config.service');
 const { BinanceMarketDataService } = require('../dist/binance-market-data.service');
+const { BinanceSecretsService } = require('../dist/binance-secrets.service');
+const { BinanceService } = require('../dist/binance.service');
+const { FirebaseAuthGuard } = require('../dist/firebase-auth.guard');
 const { IndicatorService } = require('../dist/indicator.service');
 const { MarketDataLoggerService } = require('../dist/market-data-logger.service');
 const { ScannerService } = require('../dist/scanner.service');
@@ -18,6 +21,24 @@ test('loads checked-in scanner configuration', () => {
   assert.equal(config.binance.timeframe, '1m');
   assert.equal(config.binance.timeout_ms, 10_000);
   assert.equal(config.firebase.enabled, true);
+});
+
+test('Firebase Auth users can access protected API routes without a wallet document', async () => {
+  const { firebaseAuth } = require('../dist/firebase-admin');
+  const originalVerify = firebaseAuth.verifyIdToken;
+  const decodedToken = { uid: 'firebase-user-uuid' };
+  firebaseAuth.verifyIdToken = async () => decodedToken;
+  const request = { headers: { authorization: 'Bearer valid-firebase-id-token' } };
+  const guard = new FirebaseAuthGuard();
+  try {
+    const allowed = await guard.canActivate({
+      switchToHttp: () => ({ getRequest: () => request }),
+    });
+    assert.equal(allowed, true);
+    assert.equal(request.firebaseUser, decodedToken);
+  } finally {
+    firebaseAuth.verifyIdToken = originalVerify;
+  }
 });
 
 test('computes a bullish indicator snapshot from rising candles', () => {
@@ -124,6 +145,70 @@ test('Binance client parses valid public klines', async () => {
     assert.equal(candles.length, 1);
     assert.equal(candles[0].close, 105);
     assert.equal(candles[0].open_time, new Date(openTime).toISOString());
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('loads Binance credentials from Secret Manager and caches their versions', async () => {
+  const service = new BinanceSecretsService(new AppConfigService());
+  const accessed = [];
+  service.client.accessSecretVersion = async request => {
+    accessed.push(request.name);
+    const value = request.name.endsWith('/BINANCE_API_KEY/versions/latest')
+      ? 'test-api-key'
+      : 'test-api-secret';
+    return [{ payload: { data: Buffer.from(value) } }];
+  };
+
+  const credentials = await service.getCredentials();
+  await service.getCredentials();
+
+  assert.deepEqual(credentials, {
+    apiKey: 'test-api-key',
+    apiSecret: 'test-api-secret',
+  });
+  assert.deepEqual(accessed.sort(), [
+    'projects/jasperpos-dev/secrets/BINANCE_API_KEY/versions/latest',
+    'projects/jasperpos-dev/secrets/BINANCE_SECRET/versions/latest',
+  ]);
+});
+
+test('Binance account endpoint signs a read-only account request with fetched credentials', async () => {
+  const originalFetch = global.fetch;
+  const apiKey = 'test-api-key';
+  const apiSecret = 'test-api-secret';
+  let requestUrl;
+  let requestOptions;
+  global.fetch = async (url, options) => {
+    requestUrl = url;
+    requestOptions = options;
+    return new Response(JSON.stringify({ balances: [
+      { asset: 'BTC', free: '0.5', locked: '0' },
+      { asset: 'ZERO', free: '0', locked: '0' },
+    ] }), { status: 200 });
+  };
+
+  try {
+    const service = new BinanceService({
+      getCredentials: async () => ({ apiKey, apiSecret }),
+    });
+    const account = await service.getAccount();
+
+    assert.equal(new URL(requestUrl).pathname, '/api/v3/account');
+    assert.equal(requestOptions.headers['X-MBX-APIKEY'], apiKey);
+    const request = new URL(requestUrl);
+    const signature = request.searchParams.get('signature');
+    request.searchParams.delete('signature');
+    const expected = require('node:crypto')
+      .createHmac('sha256', apiSecret)
+      .update(request.searchParams.toString())
+      .digest('hex');
+    assert.equal(signature, expected);
+    assert.deepEqual(account, {
+      connected: true,
+      balances: [{ asset: 'BTC', free: 0.5, locked: 0 }],
+    });
   } finally {
     global.fetch = originalFetch;
   }
