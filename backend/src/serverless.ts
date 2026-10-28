@@ -9,6 +9,7 @@ const allowedOrigins = [
   /^http:\/\/localhost:\d+$/,
   'https://mytradingapp-50d29.web.app',
   'https://mytradingapp-50d29.firebaseapp.com',
+  'https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app',
 ];
 
 let application: Promise<Express> | undefined;

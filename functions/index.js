@@ -1,7 +1,7 @@
 const admin = require('firebase-admin');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
-const { onRequest } = require('firebase-functions/v2/https');
+const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { GoogleAuth } = require('google-auth-library');
 
@@ -134,6 +134,26 @@ async function getAppConfig() {
 exports.trading_scanMarket_high = scheduleRiskProfile('high');
 exports.trading_scanMarket_medium = scheduleRiskProfile('medium');
 exports.trading_scanMarket_slow = scheduleRiskProfile('slow');
+
+exports.getBinanceStatus = onCall(
+  {
+    region: 'asia-east1',
+    cors: [
+      'https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app',
+    ],
+  },
+  async request => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError('unauthenticated', 'Sign in before checking Binance status.');
+    }
+
+    const integration = await getFirestore()
+      .doc(`users/${uid}/integrations/binance`)
+      .get();
+    return { connected: integration.exists && integration.data()?.enabled === true };
+  },
+);
 
 exports.binanceApi = onRequest(
   {

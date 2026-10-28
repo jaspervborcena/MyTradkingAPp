@@ -74,6 +74,28 @@ Example response:
 
 The `connected` flag here represents the user's Firestore integration setting. It does not verify that Binance credentials work. Use `/api/binance/account` to check the shared server-side Binance connection.
 
+The Firebase callable function `getBinanceStatus` is also deployed in `asia-east1` for clients using the Firebase Functions SDK. It returns the same user-specific integration status and requires a signed-in Firebase user. The callable endpoint is:
+
+```text
+https://asia-east1-mytradingapp-50d29.cloudfunctions.net/getBinanceStatus
+```
+
+Invoke it with the Firebase Functions SDK, which attaches the current user's Firebase Auth token:
+
+```typescript
+import { getFunctions, httpsCallable } from 'firebase/functions';
+
+const functions = getFunctions(firebaseApp, 'asia-east1');
+const getBinanceStatus = httpsCallable<void, BinanceStatus>(
+  functions,
+  'getBinanceStatus',
+);
+const result = await getBinanceStatus();
+const status = result.data;
+```
+
+This callable allows the hosted dashboard origin `https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app`. It is only for checking status; use the authenticated HTTP endpoints below to read balances or place orders.
+
 ### `GET /api/binance/account`
 
 Reads the Binance account associated with the API's server-side `BINANCE_API_KEY` and `BINANCE_SECRET` Secret Manager secrets. All authorized Firebase users access the same shared Binance account.
@@ -196,13 +218,16 @@ Example NestJS error:
 
 ## Browser CORS
 
-The backend allows requests with `Authorization` and `Content-Type` headers and the `GET`, `POST`, and `OPTIONS` methods. Current browser origins allowed by the application are:
+The NestJS HTTP API allows requests with `Authorization` and `Content-Type` headers and the `GET`, `POST`, and `OPTIONS` methods. Its current browser origins are:
 
 - Any `http://localhost:<port>` origin
 - `https://mytradingapp-50d29.web.app`
 - `https://mytradingapp-50d29.firebaseapp.com`
+- `https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app`
 
 If the UI is hosted on another origin, add that exact origin to the backend's allowlist and redeploy. Do not solve CORS by allowing every production origin.
+
+The `getBinanceStatus` Firebase callable has a separate CORS configuration in `functions/index.js`. Its allowed origin is listed above; updating the NestJS HTTP API allowlist does not change the callable's CORS policy.
 
 ## Angular UI example
 
