@@ -1,9 +1,6 @@
-# Python bytecode and caches
-__pycache__/
-*.py[cod]
-
 # Node.js installed dependencies
 node_modules/
+dist/
 
 # Local scanner output
 /data/*.jsonl

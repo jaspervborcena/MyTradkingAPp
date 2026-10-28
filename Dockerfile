@@ -1,13 +1,21 @@
-FROM python:3.13-slim
+FROM node:20-alpine AS build
+
+WORKDIR /app/backend
+COPY backend/package*.json ./
+RUN npm ci
+
+COPY backend/ ./
+RUN npm run build
+
+FROM node:20-alpine
 
 WORKDIR /app
+COPY backend/package*.json ./backend/
+RUN cd backend && npm ci --omit=dev && npm cache clean --force
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+COPY --from=build /app/backend/dist ./backend/dist
+COPY config ./config
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+ENV NODE_ENV=production
 
-COPY . .
-
-CMD ["python", "-m", "src.main"]
+CMD ["node", "backend/dist/main.js"]

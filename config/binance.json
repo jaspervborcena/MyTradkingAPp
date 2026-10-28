@@ -3,6 +3,6 @@
   "market_type": "spot",
   "timeframe": "1m",
   "candle_limit": 100,
-  "timeout_seconds": 10000,
+  "timeout_ms": 10000,
   "max_retries": 3
 }

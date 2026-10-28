@@ -29,7 +29,7 @@ Profile-driven observation and signal events also include `profile_name`. Signal
 
 ## 2. risk_profiles
 
-Use one document per profile, with the document ID matching `profile_name`: `high`, `medium`, or `slow`. The scheduled functions `trading_scanMarket_high`, `trading_scanMarket_medium`, and `trading_scanMarket_slow` each submit the shared Cloud Run Job with the corresponding `PROFILE` environment variable. Each profile is loaded and validated by the Python runner before it requests market data.
+Use one document per profile, with the document ID matching `profile_name`: `high`, `medium`, or `slow`. The scheduled functions `trading_scanMarket_high`, `trading_scanMarket_medium`, and `trading_scanMarket_slow` each submit the shared NestJS Cloud Run Job with the corresponding `PROFILE` environment variable. Each profile is loaded and validated by the NestJS scanner before it requests market data.
 
 Example `risk_profiles/high` document:
 

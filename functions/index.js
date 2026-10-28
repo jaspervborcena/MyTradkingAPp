@@ -15,7 +15,7 @@ setGlobalOptions({
   memory: '1GiB',
 });
 
-async function startPythonScannerJob(profileName) {
+async function startScannerJob(profileName) {
   const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || admin.app().options.projectId;
   if (!projectId) {
     throw new Error('Google Cloud project ID is not available to the scheduled function');
@@ -88,7 +88,7 @@ function scheduleRiskProfile(profileName) {
         }
       }
 
-      await startPythonScannerJob(profileName);
+      await startScannerJob(profileName);
       await profileRef.set({ last_run_at: FieldValue.serverTimestamp() }, { merge: true });
       console.log(`Scheduled ${profileName} market scan submitted successfully`);
     },

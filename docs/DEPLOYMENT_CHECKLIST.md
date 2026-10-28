@@ -5,9 +5,11 @@ This checklist is for the signal-only crypto scanner in this repository. It is i
 ## 1. Pre-flight checks
 
 - [ ] Confirm the repository is the source of truth and the code is clean.
-- [ ] Verify Python tests still pass locally:
+- [ ] Verify NestJS tests and TypeScript compilation pass locally:
   ```powershell
-  python -m unittest discover -s tests -v
+  Set-Location backend
+  npm ci
+  npm test
   ```
 - [ ] Verify the project is configured for signal-only mode.
 - [ ] Confirm no exchange secrets, API keys, or Firebase service-account files are stored in the repo.
@@ -19,7 +21,7 @@ This checklist is for the signal-only crypto scanner in this repository. It is i
 - [ ] Docker Compose is available for local smoke tests.
 - [ ] `.dockerignore` excludes local caches and secrets.
 - [ ] `config/*.json` contains only non-secret runtime settings.
-- [ ] `src/main.py` starts the app without live order execution.
+- [ ] `backend/src/main.ts` starts the app without live order execution.
 
 ## 3. Secret handling
 

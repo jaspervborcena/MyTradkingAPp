@@ -4,8 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: tradingapp
+    ports:
+      - "3000:3000"
     environment:
-      PYTHONUNBUFFERED: "1"
+      PORT: "3000"
     volumes:
-      - .:/app
-    command: python -m src.main
+      - ./data:/app/data
