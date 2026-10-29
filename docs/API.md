@@ -363,7 +363,7 @@ The NestJS HTTP API allows requests with `Authorization` and `Content-Type` head
 
 If the UI is hosted on another origin, add that exact origin to the backend's allowlist and redeploy. Do not solve CORS by allowing every production origin.
 
-The `getBinanceStatus` Firebase callable has a separate CORS configuration in `functions/index.js`. Its allowed origin is listed above; updating the NestJS HTTP API allowlist does not change the callable's CORS policy.
+The `getBinanceStatus` Firebase callable has a separate CORS configuration in `functions/index.js`. It currently allows `http://localhost:4200` for local Angular development and `https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app` for the deployed UI. Updating the NestJS HTTP API allowlist does not change the callable's CORS policy. Redeploy the callable after changing its allowlist.
 
 ## Angular UI example
 

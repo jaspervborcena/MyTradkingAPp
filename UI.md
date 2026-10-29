@@ -107,7 +107,7 @@ async analyzeWatchlist(symbols?: string[]): Promise<WatchlistAnalysis> {
 
 The response contains `overview`, one `results` entry per symbol, backend-computed `supportingIndicators`, `risks`, `timeframeSummaries`, `explanation`, `dataStatus`, and Binance `dataFreshness` timestamps. Render `unavailable`/partial results and stale-data warnings rather than replacing missing values. The analysis is informational, not financial advice or a guaranteed outcome. Handle `400` (invalid/not-in-watchlist selection), `401` (sign-in again), `429` (rate limit), `502` (analysis provider failure), and `503` (server configuration/upstream dependency unavailable) as distinct API errors. The model's prose is not a source for price/indicator values.
 
-The callable and NestJS CORS allowlists include the hosted dashboard origin `https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app`. A CORS error on a callable is separate from the NestJS HTTP API; verify the request's region and use the correct client (`httpsCallable` for Binance connection/status/account sync, `fetch`/HTTP for analysis).
+The callable allows the local Angular origin `http://localhost:4200` and the hosted dashboard origin `https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app`. The NestJS HTTP API has its own CORS allowlist. A CORS error on a callable is separate from the NestJS HTTP API; verify the request's region and use the correct client (`httpsCallable` for Binance connection/status/account sync, `fetch`/HTTP for analysis). Changes to the callable CORS allowlist take effect only after deploying `getBinanceStatus`.
 
 See [docs/API.md](docs/API.md) for the full endpoint contract, response example, authentication behavior, and error details.
 

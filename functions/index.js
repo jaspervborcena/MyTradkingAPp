@@ -138,6 +138,7 @@ exports.getBinanceStatus = onCall(
   {
     region: 'asia-east1',
     cors: [
+      'http://localhost:4200',
       'https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app',
     ],
   },
