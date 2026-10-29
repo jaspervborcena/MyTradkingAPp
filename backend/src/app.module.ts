@@ -7,6 +7,7 @@ import { BinanceService } from './binance.service';
 import { FirebaseAuthGuard } from './firebase-auth.guard';
 import { IndicatorService } from './indicator.service';
 import { MarketDataLoggerService } from './market-data-logger.service';
+import { MarketTrendsController } from './market-trends.controller';
 import { NetworkDiagnosticsController } from './network-diagnostics.controller';
 import { ScannerService } from './scanner.service';
 import { StrategyService } from './strategy.service';
@@ -14,7 +15,12 @@ import { WatchlistAnalysisController } from './watchlist-analysis.controller';
 import { WatchlistAnalysisService } from './watchlist-analysis.service';
 
 @Module({
-  controllers: [BinanceController, NetworkDiagnosticsController, WatchlistAnalysisController],
+  controllers: [
+    BinanceController,
+    MarketTrendsController,
+    NetworkDiagnosticsController,
+    WatchlistAnalysisController,
+  ],
   providers: [
     AppConfigService,
     BinanceMarketDataService,

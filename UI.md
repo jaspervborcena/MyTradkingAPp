@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a dashboard for the scanner's **High**, **Medium**, and **Slow** risk profiles. The landing page is the **Overview**. The backend now supports manually confirmed Binance Spot market orders; any authenticated Firebase user can trade from the shared account, so the UI must clearly communicate that shared access and require review before submission. Automated trading, limit orders, withdrawals, and order history are not implemented.
+Build a dashboard for the scanner's **High**, **Medium**, and **Slow** risk profiles. The landing page is the **Overview**. The NestJS API supports manually confirmed orders against a shared Binance account, while the dashboard's Binance connection and Portfolio balance sync use each signed-in user's separately linked Binance account. Keep these account paths clearly labeled and do not imply that balances or orders are interchangeable. Automated trading, limit orders, withdrawals, and order history are not implemented.
 
 The README describes the Angular dashboard as a separate project. Keep this file as the integration checklist for that frontend unless the project location or framework changes.
 
@@ -15,6 +15,39 @@ https://asia-east1-mytradingapp-50d29.cloudfunctions.net/binanceApi
 ```
 
 Configure this base URL through the Angular environment/configuration layer. Use the same Firebase project/Auth instance as the dashboard, and obtain a fresh Firebase ID token with `currentUser.getIdToken()` before each NestJS HTTP request. Send it as `Authorization: Bearer <token>`. Never send a UID, API key, Firebase token in the request body, or any client-calculated prices/indicators as authority.
+
+### Per-user Binance connection and Portfolio balance sync
+
+The Portfolio page uses Firebase callable functions for each signed-in user's own Binance credentials. Connect the user's account through `connectBinance`; the function verifies the credentials and stores them encrypted at `users/{uid}/integrations/binance`. Never store Binance credentials in the Angular app or accept a UID from the client.
+
+On Portfolio page load and when the user clicks **Refresh and sync**, call `getBinanceAccount` in `asia-east1`:
+
+```typescript
+import { getFunctions, httpsCallable } from 'firebase/functions';
+
+interface BinanceBalance {
+  asset: string;
+  free: number;
+  locked: number;
+}
+
+interface BinanceAccountSnapshot {
+  connected: true;
+  balances: BinanceBalance[];
+  syncedAt: string;
+}
+
+const functions = getFunctions(firebaseApp, 'asia-east1');
+const getBinanceAccount = httpsCallable<void, BinanceAccountSnapshot>(
+  functions,
+  'getBinanceAccount',
+);
+const { data } = await getBinanceAccount();
+```
+
+The callable derives the user's UID from Firebase Auth, reads that user's encrypted credentials, fetches the Binance Spot account, and replaces the snapshot at `users/{uid}/portfolio_binance_sync/current`. It returns only non-zero asset balances (`asset`, `free`, `locked`) and `syncedAt`. The UI should show the sync time and report failures without replacing the last successfully displayed snapshot. A failed refresh must not be presented as a successful sync.
+
+This snapshot is separate from tracked order lots and the simulated wallet. Binance account balances do not include purchase cost basis; do not infer buy prices or P&L from the balance response. Sync must not create paper trades, change wallet funds, or submit/cancel orders. Disconnecting the per-user Binance integration removes its saved snapshot.
 
 ### Binance status callable: region is required
 
@@ -31,7 +64,7 @@ const getBinanceStatus = httpsCallable<void, { connected: boolean }>(
 const { data } = await getBinanceStatus();
 ```
 
-Always pass `'asia-east1'`; do not rely on an SDK default. A request to any other region is not the deployed callable and may fail CORS. Do not call the callable URL using `fetch`; use `httpsCallable`, which handles the callable protocol and Firebase Auth token. If the browser network panel shows another region, the UI is using the wrong Functions instance; check its Firebase initialization and redeploy the UI.
+Always pass `'asia-east1'`; do not rely on an SDK default. A request to any other region is not the deployed callable and may fail CORS. Do not call the callable URL using `fetch`; use `httpsCallable`, which handles the callable protocol and Firebase Auth token. The status callable only reports whether the user's Firestore integration record is enabled; `getBinanceAccount` performs the live Binance read. If the browser network panel shows another region, the UI is using the wrong Functions instance; check its Firebase initialization and redeploy the UI.
 
 ### Watchlist analysis: authenticated HTTP endpoint
 
@@ -74,7 +107,7 @@ async analyzeWatchlist(symbols?: string[]): Promise<WatchlistAnalysis> {
 
 The response contains `overview`, one `results` entry per symbol, backend-computed `supportingIndicators`, `risks`, `timeframeSummaries`, `explanation`, `dataStatus`, and Binance `dataFreshness` timestamps. Render `unavailable`/partial results and stale-data warnings rather than replacing missing values. The analysis is informational, not financial advice or a guaranteed outcome. Handle `400` (invalid/not-in-watchlist selection), `401` (sign-in again), `429` (rate limit), `502` (analysis provider failure), and `503` (server configuration/upstream dependency unavailable) as distinct API errors. The model's prose is not a source for price/indicator values.
 
-The HTTPS function and NestJS CORS allowlist include the hosted dashboard origin `https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app`. A CORS error on the callable is separate from the NestJS HTTP API; verify the request's region and use the correct client (`httpsCallable` for status, `fetch`/HTTP for analysis).
+The callable and NestJS CORS allowlists include the hosted dashboard origin `https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app`. A CORS error on a callable is separate from the NestJS HTTP API; verify the request's region and use the correct client (`httpsCallable` for Binance connection/status/account sync, `fetch`/HTTP for analysis).
 
 See [docs/API.md](docs/API.md) for the full endpoint contract, response example, authentication behavior, and error details.
 

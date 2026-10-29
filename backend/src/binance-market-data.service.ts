@@ -5,10 +5,14 @@ import type { Candle } from './market.types';
 export class MarketDataError extends Error {}
 
 export interface Binance24HourTicker {
+  symbol: string;
   lastPrice: number;
   openPrice: number;
   priceChangePercent: number;
   volume: number;
+  quoteVolume: number;
+  highPrice: number;
+  lowPrice: number;
   closeTime: string;
 }
 
@@ -43,31 +47,73 @@ export class BinanceMarketDataService {
   async fetch24HourTicker(symbol: string): Promise<Binance24HourTicker> {
     const query = new URLSearchParams({ symbol: symbol.toUpperCase() });
     const url = `${this.baseUrl}/api/v3/ticker/24hr?${query.toString()}`;
+    return this.parseTicker(await this.requestWithRetries(url));
+  }
+
+  async fetchMarketTrendTickers(): Promise<{
+    source: 'Binance Spot';
+    fetchedAt: string;
+    tickers: Binance24HourTicker[];
+  }> {
+    const url = `${this.baseUrl}/api/v3/ticker/24hr`;
     const payload = await this.requestWithRetries(url);
+    if (!Array.isArray(payload)) {
+      throw new MarketDataError('Binance returned an invalid 24-hour ticker list');
+    }
+
+    const tickers = payload
+      .filter((ticker): ticker is Record<string, unknown> => {
+        if (!ticker || typeof ticker !== 'object' || Array.isArray(ticker)) {
+          return false;
+        }
+        const symbol = (ticker as Record<string, unknown>).symbol;
+        return typeof symbol === 'string' && symbol.endsWith('USDT') && !symbol.includes('_');
+      })
+      .map(ticker => this.parseTicker(ticker));
+
+    return {
+      source: 'Binance Spot',
+      fetchedAt: new Date().toISOString(),
+      tickers,
+    };
+  }
+
+  private parseTicker(payload: unknown): Binance24HourTicker {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       throw new MarketDataError('Binance returned an invalid 24-hour ticker');
     }
 
     const ticker = payload as Record<string, unknown>;
+    const symbol = ticker.symbol;
     const lastPrice = Number(ticker.lastPrice);
     const openPrice = Number(ticker.openPrice);
     const volume = Number(ticker.volume);
+    const quoteVolume = Number(ticker.quoteVolume);
+    const highPrice = Number(ticker.highPrice);
+    const lowPrice = Number(ticker.lowPrice);
     const closeTime = Number(ticker.closeTime);
     if (
-      !Number.isFinite(lastPrice) || lastPrice <= 0
+      typeof symbol !== 'string' || !/^[A-Z0-9]{2,30}USDT$/.test(symbol)
+      || !Number.isFinite(lastPrice) || lastPrice <= 0
       || !Number.isFinite(openPrice) || openPrice <= 0
       || !Number.isFinite(volume) || volume < 0
+      || !Number.isFinite(quoteVolume) || quoteVolume < 0
+      || !Number.isFinite(highPrice) || highPrice <= 0
+      || !Number.isFinite(lowPrice) || lowPrice <= 0
       || !Number.isFinite(closeTime) || closeTime <= 0
       || Number.isNaN(new Date(closeTime).getTime())
     ) {
       throw new MarketDataError('Binance returned invalid 24-hour ticker values');
     }
-
     return {
+      symbol,
       lastPrice,
       openPrice,
       priceChangePercent: ((lastPrice - openPrice) / openPrice) * 100,
       volume,
+      quoteVolume,
+      highPrice,
+      lowPrice,
       closeTime: new Date(closeTime).toISOString(),
     };
   }

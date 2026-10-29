@@ -352,9 +352,13 @@ test('Binance client parses fresh 24-hour Spot ticker values', async () => {
   global.fetch = async url => {
     assert.match(url, /\/api\/v3\/ticker\/24hr\?symbol=BTCUSDT$/);
     return new Response(JSON.stringify({
+      symbol: 'BTCUSDT',
       lastPrice: '105.25',
       openPrice: '100',
       volume: '1234.5',
+      quoteVolume: '98765.4',
+      highPrice: '110',
+      lowPrice: '95',
       closeTime,
     }), { status: 200 });
   };
@@ -363,10 +367,64 @@ test('Binance client parses fresh 24-hour Spot ticker values', async () => {
     const ticker = await new BinanceMarketDataService(new AppConfigService())
       .fetch24HourTicker('btcusdt');
     assert.deepEqual(ticker, {
+      symbol: 'BTCUSDT',
       lastPrice: 105.25,
       openPrice: 100,
       priceChangePercent: 5.25,
       volume: 1234.5,
+      quoteVolume: 98765.4,
+      highPrice: 110,
+      lowPrice: 95,
+      closeTime: new Date(closeTime).toISOString(),
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('fetches validated USDT ticker rows for Market Trends', async () => {
+  const originalFetch = global.fetch;
+  const closeTime = Date.now();
+  global.fetch = async url => {
+    assert.equal(url, 'https://api.binance.com/api/v3/ticker/24hr');
+    return new Response(JSON.stringify([
+      {
+        symbol: 'BTCUSDT',
+        lastPrice: '105.25',
+        openPrice: '100',
+        volume: '1234.5',
+        quoteVolume: '98765.4',
+        highPrice: '110',
+        lowPrice: '95',
+        closeTime,
+      },
+      {
+        symbol: 'ETHBTC',
+        lastPrice: '0.05',
+        openPrice: '0.04',
+        volume: '100',
+        quoteVolume: '5',
+        highPrice: '0.06',
+        lowPrice: '0.03',
+        closeTime,
+      },
+    ]), { status: 200 });
+  };
+
+  try {
+    const result = await new BinanceMarketDataService(new AppConfigService())
+      .fetchMarketTrendTickers();
+    assert.equal(result.source, 'Binance Spot');
+    assert.equal(result.tickers.length, 1);
+    assert.deepEqual(result.tickers[0], {
+      symbol: 'BTCUSDT',
+      lastPrice: 105.25,
+      openPrice: 100,
+      priceChangePercent: 5.25,
+      volume: 1234.5,
+      quoteVolume: 98765.4,
+      highPrice: 110,
+      lowPrice: 95,
       closeTime: new Date(closeTime).toISOString(),
     });
   } finally {

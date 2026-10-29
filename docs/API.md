@@ -2,6 +2,10 @@
 
 This document describes the HTTP API implemented in `backend/` and how an authenticated UI can call it. The API checks a user's Binance integration flag, reads balances, supports manually confirmed Binance Spot market buy/sell orders, and provides informational OpenAI analysis of the signed-in user's watchlist. It does not provide automated strategy execution, limit orders, withdrawals, or market-signal query endpoints.
 
+## Firebase region
+
+All Firebase Functions APIs documented here are deployed in `asia-east1`. Use the Asia endpoint URLs below and initialize the Firebase Functions client with the explicit `asia-east1` region for callable functions. Do not rely on the Firebase SDK's default region.
+
 ## Base URL
 
 The deployed Firebase HTTPS function `binanceApi` in project `mytradingapp-50d29` is in `asia-east1`. Use this base URL in production:
@@ -31,6 +35,39 @@ The backend verifies the token with Firebase Admin, including checking revocatio
 Never put Firebase Admin credentials, Binance credentials, or service-account keys in the UI. The UI obtains a short-lived ID token from the Firebase client SDK and sends it to the API. The Binance credentials are fetched server-side from Secret Manager. See [SECRET_MANAGER.md](./SECRET_MANAGER.md) for runtime IAM setup.
 
 ## Endpoints
+
+### `GET /api/market-trends/tickers`
+
+Returns validated Binance Spot 24-hour ticker data for USDT-quoted pairs, including each symbol's last price, 24-hour percentage change, base/quote volume, high, low, and close time. `source` is `Binance Spot` and `fetchedAt` is the server fetch time. The UI obtains the authenticated user's Firebase ID token and calls this endpoint through the `binanceApi` base URL:
+
+```http
+GET https://asia-east1-mytradingapp-50d29.cloudfunctions.net/binanceApi/api/market-trends/tickers
+Authorization: Bearer <Firebase ID token>
+```
+
+Example response:
+
+```json
+{
+  "source": "Binance Spot",
+  "fetchedAt": "2026-10-28T12:00:00.000Z",
+  "tickers": [
+    {
+      "symbol": "BTCUSDT",
+      "lastPrice": 67000,
+      "openPrice": 66000,
+      "priceChangePercent": 1.5151515151515151,
+      "volume": 123.45,
+      "quoteVolume": 8250000,
+      "highPrice": 67500,
+      "lowPrice": 65500,
+      "closeTime": "2026-10-28T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+This endpoint replaces the former third-party market-metadata request for the Market Trends ticker list. Binance Spot does not provide market capitalization, circulating supply, token categories, or recently-listed classifications; this response must not be presented as containing those fields.
 
 ### `POST /api/analysis/watchlist`
 
@@ -165,13 +202,39 @@ const result = await getBinanceStatus();
 const status = result.data;
 ```
 
-Always pass `'asia-east1'` to `getFunctions`; do not rely on an SDK default or select another region. The callable is deployed in `asia-east1`, and requests to another region may fail their CORS preflight. Do not fetch the callable URL directly; invoke it using `httpsCallable`, which uses Firebase's callable protocol and attaches the current user's Auth token.
+Initialize the client with `getFunctions(firebaseApp, 'asia-east1')`; do not rely on an SDK default or select another region. The callable is deployed in `asia-east1`, and requests sent to another region may fail. Do not fetch the callable URL directly; invoke it using `httpsCallable`, which uses Firebase's callable protocol and attaches the current user's Auth token.
 
 This callable allows the hosted dashboard origin `https://tradingdashboard--mytradingapp-50d29.asia-east1.hosted.app`. It is only for checking status. For watchlist analysis, account reads, and orders, use the authenticated NestJS HTTP endpoints at the `binanceApi` base URL.
+
+### Per-user Binance account callable used by the Portfolio UI
+
+The Angular Portfolio UI uses the Firebase callable `getBinanceAccount` for the **signed-in user's own linked Binance account**. Invoke it with `httpsCallable` and the explicit `asia-east1` region; Firebase attaches the signed-in user's Auth context. Do not send a UID or credentials in the callable request.
+
+The function reads the encrypted credentials at `users/{firebaseUid}/integrations/binance`, calls Binance Spot `GET /api/v3/account`, and returns non-zero balances. On a successful read it replaces the private sync snapshot at `users/{firebaseUid}/portfolio_binance_sync/current`:
+
+```typescript
+interface BinanceAccountSnapshot {
+  connected: true;
+  balances: Array<{ asset: string; free: number; locked: number }>;
+  syncedAt: string;
+}
+
+const getBinanceAccount = httpsCallable<void, BinanceAccountSnapshot>(
+  getFunctions(firebaseApp, 'asia-east1'),
+  'getBinanceAccount',
+);
+const { data } = await getBinanceAccount();
+```
+
+Calling this function again (including the Portfolio page's **Refresh and sync** action) replaces the snapshot with the latest successful Binance account response. A failed request must be surfaced as an error; it must not clear or report the old snapshot as newly synced. The snapshot is separate from tracked Binance order lots and the simulated wallet. Binance account balances do not contain cost basis, so the UI must not derive a buy price or P&L from this response. Disconnecting the per-user Binance integration deletes the sync snapshot.
+
+This callable uses the per-user credentials stored by the dashboard's `connectBinance` callable. It is not the NestJS shared-account endpoint below. Changes to Firebase callable source must be deployed with the Firebase Functions deployment for them to take effect.
 
 ### `GET /api/binance/account`
 
 Reads the Binance account associated with the API's server-side `BINANCE_API_KEY` and `BINANCE_SECRET` Secret Manager secrets. All authorized Firebase users access the same shared Binance account.
+
+This endpoint is separate from the per-user `getBinanceAccount` callable above. It reads a shared server-side account, does not update `users/{firebaseUid}/portfolio_binance_sync/current`, and should only be used by UI features explicitly labeled as the shared account.
 
 Example response:
 
